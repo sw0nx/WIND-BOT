@@ -1,6 +1,6 @@
 import os
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import View, Select, Button
 import datetime
 import pytz
@@ -14,6 +14,7 @@ TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"
 LOG_CHANNEL_ID = 1398267597299912744
 ADMIN_ROLE_ID = 123456789012345678
 OWNER_ROLE_ID = 987654321098765432
+AUTO_CLOSE_HOURS = 24  # 티켓 자동 닫기 시간
 # ==============
 
 intents = discord.Intents.default()
@@ -134,6 +135,12 @@ class ShopSelect(Select):
                 )
             )
 
+        # 자동 닫기 예약
+        await asyncio.sleep(AUTO_CLOSE_HOURS * 3600)
+        if ticket_channel and ticket_channel.exists():
+            await ticket_channel.send("⏳ 시간이 초과되어 티켓이 자동으로 닫힙니다.")
+            await ticket_channel.delete()
+
 # ====== 뷰 클래스 ======
 class ShopView(View):
     def __init__(self):
@@ -142,6 +149,7 @@ class ShopView(View):
 
 # ====== 명령어 ======
 @bot.command()
+@commands.has_permissions(administrator=True)
 async def 상점(ctx):
     now_kst = datetime.datetime.now(kst)
     timestamp_kst = int(now_kst.timestamp())
@@ -161,6 +169,19 @@ async def 상점(ctx):
         timestamp_kst = int(now_kst.timestamp())
         embed.set_field_at(0, name="현재 시간", value=f"<t:{timestamp_kst}:F>", inline=False)
         await message.edit(embed=embed, view=ShopView())
+
+# ====== 봇 상태 표시 ======
+@tasks.loop(seconds=60)
+async def update_status():
+    total_tickets = sum(1 for ch in bot.get_all_channels() if ch.name.startswith("ticket-"))
+    await bot.change_presence(
+        activity=discord.Game(name=f"🎫 티켓 {total_tickets}개 처리 중")
+    )
+
+@bot.event
+async def on_ready():
+    print(f"✅ {bot.user} 로 로그인됨")
+    update_status.start()
 
 # 실행
 keep_alive()
