@@ -75,7 +75,7 @@ class CloseTicketButton(Button):
         super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="wind_close_ticket_v1")
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         channel = interaction.channel
         if not channel or not channel.name.startswith("ticket-"):
             await interaction.followup.send("이 버튼은 티켓 채널에서만 사용할 수 있습니다.", ephemeral=True)
@@ -115,106 +115,69 @@ class ShopSelect(Select):
 
     async def callback(self, interaction: discord.Interaction):
         selected_item = self.values[0]
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()  # "선택됨" 표시 없이 초기화 가능하게 함
         guild = interaction.guild
         if not guild:
-            await interaction.followup.send("길드 정보가 없습니다.", ephemeral=True)
             return
 
-        category = None
-        try:
-            if CATEGORY_ID:
-                category = guild.get_channel(int(CATEGORY_ID))
-                if category and not isinstance(category, discord.CategoryChannel):
-                    category = None
-        except Exception:
-            category = None
-
-        if not category:
+        # 카테고리 가져오기
+        category = guild.get_channel(CATEGORY_ID) if CATEGORY_ID else None
+        if not isinstance(category, discord.CategoryChannel):
             category = discord.utils.get(guild.categories, name=TICKET_CATEGORY_NAME)
             if not category:
                 try:
                     category = await guild.create_category(TICKET_CATEGORY_NAME)
-                except Exception:
+                except:
                     category = None
 
-        def user_has_ticket_channel():
-            uname = interaction.user.name.lower()
-            uid = str(interaction.user.id)
-            for ch in guild.channels:
-                if not isinstance(ch, discord.TextChannel):
-                    continue
-                cname = ch.name.lower()
-                if cname.startswith("ticket-") and (uname in cname or uid in cname or ch.permissions_for(interaction.user).read_messages):
-                    return ch
-            return None
+        # 기존 티켓 확인
+        for ch in guild.channels:
+            if isinstance(ch, discord.TextChannel) and ch.permissions_for(interaction.user).read_messages:
+                if ch.name.startswith("ticket-"):
+                    await interaction.followup.send(f"⚠ 이미 티켓이 존재합니다: {ch.mention}", ephemeral=True)
+                    return
 
-        existing_channel = user_has_ticket_channel()
-        if existing_channel:
-            try:
-                await interaction.followup.send(f"⚠ 이미 티켓이 존재합니다: {existing_channel.mention}", ephemeral=True)
-            except Exception:
-                await interaction.followup.send("⚠ 이미 티켓이 존재합니다 (채널을 표시할 수 없음).", ephemeral=True)
-            return
-
+        # 채널 이름
         base = f"ticket-{selected_item}-{interaction.user.name}-{interaction.user.id}"
         channel_name = sanitize_channel_name(base)
 
-        if discord.utils.get(guild.channels, name=channel_name):
-            channel_name = sanitize_channel_name(f"{channel_name}-{int(datetime.datetime.now().timestamp())}")
-
+        # 권한 설정
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
-        try:
-            if ADMIN_ROLE_ID:
-                admin_role = guild.get_role(int(ADMIN_ROLE_ID))
-                if admin_role:
-                    overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-            if OWNER_ROLE_ID:
-                owner_role = guild.get_role(int(OWNER_ROLE_ID))
-                if owner_role:
-                    overwrites[owner_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        except Exception:
-            traceback.print_exc()
+        admin_role = guild.get_role(ADMIN_ROLE_ID)
+        if admin_role:
+            overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        owner_role = guild.get_role(OWNER_ROLE_ID)
+        if owner_role:
+            overwrites[owner_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
-        try:
-            ticket_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
-        except Exception as e:
-            traceback.print_exc()
-            await interaction.followup.send("채널 생성 중 오류가 발생했습니다. 관리자에게 문의하세요.", ephemeral=True)
-            log_ch = bot.get_channel(LOG_CHANNEL_ID)
-            if log_ch:
-                await log_ch.send(embed=discord.Embed(title="티켓 채널 생성 실패", description=str(e), color=discord.Color.red()))
-            return
+        # 채널 생성
+        ticket_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
 
         guide_embed = discord.Embed(
             title=f"{selected_item} 티켓 생성됨",
             description="💬 담당자가 곧 응답할 예정입니다.\n아래 버튼을 눌러 티켓을 닫을 수 있습니다.",
             color=0x000000
         ).set_footer(text="WIND Ticket Bot")
-        try:
-            await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
-        except Exception:
-            traceback.print_exc()
+        await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
 
-        try:
-            await interaction.followup.send(f"✅ `{selected_item}` 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
-        except Exception:
-            await interaction.channel.send("✅ 티켓이 생성되었습니다.")
+        # 유저에게 알림
+        await interaction.followup.send(f"✅ `{selected_item}` 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
-        try:
-            log_channel = bot.get_channel(LOG_CHANNEL_ID)
-            if log_channel:
-                await log_channel.send(embed=discord.Embed(
-                    title="📥 티켓 생성",
-                    description=f"**채널:** {ticket_channel.mention}\n**생성자:** {interaction.user.mention} ({interaction.user.id})\n**항목:** `{selected_item}`",
-                    color=0x000000
-                ))
-        except Exception:
-            traceback.print_exc()
+        # 원래 메뉴 초기화
+        await interaction.message.edit(view=ShopView())
+
+        # 로그 채널 기록
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(embed=discord.Embed(
+                title="📥 티켓 생성",
+                description=f"**채널:** {ticket_channel.mention}\n**생성자:** {interaction.user.mention} ({interaction.user.id})\n**항목:** `{selected_item}`",
+                color=0x000000
+            ))
 
 class ShopView(View):
     def __init__(self):
@@ -226,27 +189,17 @@ class ShopView(View):
 async def shop_cmd(ctx: commands.Context):
     embed = discord.Embed(
         title="구매하기",
-        description="구매 또는 문의를 원하시면\n아래 선택하기 버튼을 눌려주세요",
+        description="구매 또는 문의를 원하시면\n아래 선택하기 버튼을 눌러주세요",
         color=0x000000
     )
     view = ShopView()
-    try:
-        await ctx.send(embed=embed, view=view)
-    except Exception:
-        await ctx.send("임베드 전송 실패 — 권한을 확인하세요.")
-        return
-    try:
-        bot.add_view(view)
-    except Exception:
-        pass
+    await ctx.send(embed=embed, view=view)
+    bot.add_view(view)
 
 # ---------- on_ready ----------
 @bot.event
 async def on_ready():
-    try:
-        bot.add_view(ShopView())
-    except Exception:
-        pass
+    bot.add_view(ShopView())
     print(f"✅ 로그인됨: {bot.user} (ID: {bot.user.id})")
 
 # 실행
