@@ -1,12 +1,13 @@
-import os
 import discord
 from discord.ext import commands
 from discord.ui import View, Select, Button
 import datetime
 import pytz
+from flask import Flask
+import threading
 
 # ==== 설정 부분 ====
-TOKEN = os.getenv("TOKEN")  # 환경 변수에서 토큰 불러오기
+TOKEN = "TOKEN"
 TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"
 LOG_CHANNEL_ID = 1398267597299912744
 ADMIN_ROLE_ID = 123456789012345678
@@ -22,21 +23,34 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 kst = pytz.timezone('Asia/Seoul')
 
+# ====== Flask 서버 (24시간 유지용) ======
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = threading.Thread(target=run_web)
+    t.start()
+# ======================================
 
 class CloseTicketButton(Button):
     def __init__(self):
-        super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger)
+        super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, timeout=None)
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.channel.name.startswith("ticket-"):
+            await interaction.channel.delete()
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 now_kst = datetime.datetime.now(kst)
                 await log_channel.send(
                     f"티켓 닫힘 | 채널: `{interaction.channel.name}` | 닫은 유저: {interaction.user.mention} | 시간: {now_kst.strftime('%Y-%m-%d %H:%M:%S')}"
                 )
-            await interaction.channel.delete()
-
 
 class ShopSelect(Select):
     def __init__(self):
@@ -53,10 +67,10 @@ class ShopSelect(Select):
         if not category:
             category = await guild.create_category(TICKET_CATEGORY_NAME)
 
-        ticket_name = f"ticket-{interaction.user.name}".replace(" ", "-").lower()
+        ticket_name = f"ticket-{interaction.user.name}"
         existing_channel = discord.utils.get(guild.channels, name=ticket_name)
         if existing_channel:
-            await interaction.response.send_message(f"이미 티켓이 존재합니다: {existing_channel.mention}", ephemeral=False)
+            await interaction.response.send_message(f"이미 티켓이 존재합니다: {existing_channel.mention}", ephemeral=True)
             return
 
         overwrites = {
@@ -91,11 +105,8 @@ class ShopSelect(Select):
         guide_embed.add_field(name="생성 시간", value=f"<t:{timestamp_kst}:F>", inline=False)
         guide_embed.set_footer(text=f"WIND Ticket Bot - 윈드 티켓봇 | {now_kst.strftime('%Y-%m-%d %H:%M:%S')}")
 
-        view = View()
-        view.add_item(CloseTicketButton())
-        await ticket_channel.send(embed=guide_embed, view=view)
-
-        await interaction.response.send_message(f"티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=False)
+        await ticket_channel.send(embed=guide_embed, view=View(timeout=None).add_item(CloseTicketButton()))
+        await interaction.response.send_message(f"티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
@@ -103,12 +114,10 @@ class ShopSelect(Select):
                 f"티켓 생성 | 채널: {ticket_channel.mention} | 생성자: {interaction.user.mention} | 항목: `{self.values[0]}` | 시간: {now_kst.strftime('%Y-%m-%d %H:%M:%S')}"
             )
 
-
 class ShopView(View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(ShopSelect())
-
 
 @bot.command()
 async def 상점(ctx):
@@ -121,5 +130,11 @@ async def 상점(ctx):
     embed.set_footer(text=f"WIND Ticket Bot - 윈드 티켓봇 | {now_kst.strftime('%Y-%m-%d %H:%M:%S')}")
     await ctx.send(embed=embed, view=ShopView())
 
+@bot.event
+async def on_ready():
+    bot.add_view(ShopView())  # 영구 뷰 등록
+    print(f"✅ 봇 로그인 완료: {bot.user}")
 
+# Flask 웹서버 먼저 실행
+keep_alive()
 bot.run(TOKEN)
