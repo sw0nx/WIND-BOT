@@ -1,3 +1,4 @@
+import os
 import discord
 from discord.ext import commands
 from discord.ui import View, Select, Button
@@ -5,7 +6,7 @@ import datetime
 import pytz
 
 # ==== 설정 부분 ====
-TOKEN = "TOKEN"
+TOKEN = os.getenv("TOKEN")  # 환경 변수에서 토큰 불러오기
 TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"
 LOG_CHANNEL_ID = 1398267597299912744
 ADMIN_ROLE_ID = 123456789012345678
@@ -28,13 +29,13 @@ class CloseTicketButton(Button):
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.channel.name.startswith("ticket-"):
-            await interaction.channel.delete()
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 now_kst = datetime.datetime.now(kst)
                 await log_channel.send(
                     f"티켓 닫힘 | 채널: `{interaction.channel.name}` | 닫은 유저: {interaction.user.mention} | 시간: {now_kst.strftime('%Y-%m-%d %H:%M:%S')}"
                 )
+            await interaction.channel.delete()
 
 
 class ShopSelect(Select):
@@ -52,7 +53,7 @@ class ShopSelect(Select):
         if not category:
             category = await guild.create_category(TICKET_CATEGORY_NAME)
 
-        ticket_name = f"ticket-{interaction.user.name}"
+        ticket_name = f"ticket-{interaction.user.name}".replace(" ", "-").lower()
         existing_channel = discord.utils.get(guild.channels, name=ticket_name)
         if existing_channel:
             await interaction.response.send_message(f"이미 티켓이 존재합니다: {existing_channel.mention}", ephemeral=False)
@@ -90,7 +91,10 @@ class ShopSelect(Select):
         guide_embed.add_field(name="생성 시간", value=f"<t:{timestamp_kst}:F>", inline=False)
         guide_embed.set_footer(text=f"WIND Ticket Bot - 윈드 티켓봇 | {now_kst.strftime('%Y-%m-%d %H:%M:%S')}")
 
-        await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
+        view = View()
+        view.add_item(CloseTicketButton())
+        await ticket_channel.send(embed=guide_embed, view=view)
+
         await interaction.response.send_message(f"티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=False)
 
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
