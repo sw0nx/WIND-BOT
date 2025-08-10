@@ -8,6 +8,7 @@ import pytz
 from flask import Flask
 import threading
 import asyncio
+import traceback
 
 # ==== 설정 ====
 TOKEN = os.getenv("BOT_TOKEN")  # 환경변수로 토큰 설정
@@ -42,7 +43,7 @@ def keep_alive():
 # ---------- Helper ----------
 def sanitize_channel_name(s: str) -> str:
     s = s.lower()
-    s = re.sub(r'[^a-z0-9\- _]', '', s)
+    s = re.sub(r'[^a-z0-9\-_ ]', '', s)
     s = s.replace(' ', '-')
     return s[:90]
 
@@ -64,15 +65,15 @@ class CloseTicketButton(Button):
                     embed=discord.Embed(
                         title="티켓 닫힘",
                         description=f"**채널:** {interaction.channel.name}\n"
-                                    f"**닫은 유저:** {interaction.user.mention}\n"
+                                    f"**닫은 유저:** {interaction.user.mention} ({interaction.user.display_name})\n"
                                     f"**시간:** {korean_now_str()}",
                         color=0x000000
                     )
                 )
             try:
                 await interaction.channel.delete()
-            except:
-                pass
+            except Exception as e:
+                print("❌ 티켓 삭제 오류:", e)
 
 class ShopSelect(Select):
     def __init__(self):
@@ -94,8 +95,9 @@ class ShopSelect(Select):
                 category = await guild.create_category(TICKET_CATEGORY_NAME)
 
         channel_name = sanitize_channel_name(f"ticket-{self.values[0]}-{interaction.user.name}")
-        if discord.utils.get(guild.channels, name=channel_name):
-            await interaction.followup.send(f"⚠ 이미 티켓이 존재합니다.", ephemeral=True)
+        existing = discord.utils.find(lambda c: c.name.lower() == channel_name.lower(), guild.channels)
+        if existing:
+            await interaction.followup.send("⚠ 이미 티켓이 존재합니다.", ephemeral=True)
             return
 
         overwrites = {
@@ -120,7 +122,10 @@ class ShopSelect(Select):
             await log_channel.send(
                 embed=discord.Embed(
                     title="📥 티켓 생성",
-                    description=f"**채널:** {ticket_channel.mention}\n**생성자:** {interaction.user.mention}\n**항목:** `{self.values[0]}`\n**시간:** {korean_now_str()}",
+                    description=f"**채널:** {ticket_channel.mention}\n"
+                                f"**생성자:** {interaction.user.mention} ({interaction.user.display_name})\n"
+                                f"**항목:** `{self.values[0]}`\n"
+                                f"**시간:** {korean_now_str()}",
                     color=0x000000
                 )
             )
@@ -135,25 +140,20 @@ async def update_message_time_loop(message: discord.Message):
     while True:
         await asyncio.sleep(UPDATE_INTERVAL)
         try:
-            message = await message.channel.fetch_message(message.id)
+            msg = await message.channel.fetch_message(message.id)
+            if not msg.embeds:
+                break
+            e = msg.embeds[0]
+            embed = discord.Embed(title=e.title, description=e.description, color=e.color)
+            for field in e.fields:
+                if field.name != "현재 시간":
+                    embed.add_field(name=field.name, value=field.value, inline=field.inline)
+            embed.add_field(name="현재 시간", value=korean_now_str(), inline=False)
+            await msg.edit(embed=embed, view=msg.components[0] if msg.components else None)
         except discord.NotFound:
             break
-        if not message.embeds:
-            break
-        e = message.embeds[0].copy()
-        # "현재 시간" 필드만 유지 & 갱신
-        found_idx = None
-        for i, f in enumerate(e.fields):
-            if f.name == "현재 시간":
-                found_idx = i
-                break
-        if found_idx is not None:
-            e.set_field_at(found_idx, name="현재 시간", value=korean_now_str(), inline=False)
-        else:
-            e.add_field(name="현재 시간", value=korean_now_str(), inline=False)
-        try:
-            await message.edit(embed=e, view=message.components[0] if message.components else None)
-        except:
+        except Exception:
+            traceback.print_exc()
             break
 
 # ---------- Command ----------
@@ -168,7 +168,6 @@ async def shop_cmd(ctx: commands.Context):
 
     view = ShopView()
     message = await ctx.send(embed=embed, view=view)
-    bot.add_view(view)
     bot.loop.create_task(update_message_time_loop(message))
 
 # ---------- On Ready ----------
