@@ -48,7 +48,7 @@ def sanitize_channel_name(s: str) -> str:
 
 def korean_now_str():
     now = datetime.datetime.now(kst)
-    return now.strftime("%Y년 %m월 %d일 %H:%M:%S")
+    return now.strftime("%m월 %d일 %H:%M:%S")
 
 # ---------- UI ----------
 class CloseTicketButton(Button):
@@ -105,21 +105,12 @@ class ShopSelect(Select):
         }
         ticket_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
 
-        now_ts = int(datetime.datetime.now(kst).timestamp())
-        mention_embed = discord.Embed(
-            title="티켓 알림",
-            description="💬 담당자가 곧 응답할 예정입니다.",
-            color=0x000000
-        )
-        mention_embed.add_field(name="선택 항목", value=self.values[0], inline=True)
-        mention_embed.add_field(name="생성 시간", value=f"<t:{now_ts}:F>", inline=False)
-        await ticket_channel.send(embed=mention_embed)
-
         guide_embed = discord.Embed(
             title=f"{self.values[0]} 티켓 생성됨",
-            description=f"{interaction.user.mention}님의 요청입니다.\n아래 버튼을 눌러 티켓을 닫을 수 있습니다.",
+            description="💬 담당자가 곧 응답할 예정입니다.\n아래 버튼을 눌러 티켓을 닫을 수 있습니다.",
             color=0x000000
         ).set_footer(text="WIND Ticket Bot")
+
         await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
 
         await interaction.followup.send(f"✅ `{self.values[0]}` 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
@@ -150,6 +141,7 @@ async def update_message_time_loop(message: discord.Message):
         if not message.embeds:
             break
         e = message.embeds[0].copy()
+        # "현재 시간" 필드만 유지 & 갱신
         found_idx = None
         for i, f in enumerate(e.fields):
             if f.name == "현재 시간":
@@ -173,7 +165,6 @@ async def shop_cmd(ctx: commands.Context):
         color=0x000000
     )
     embed.add_field(name="현재 시간", value=korean_now_str(), inline=False)
-    embed.add_field(name="선택 항목", value="아직 선택 안 함", inline=False)
 
     view = ShopView()
     message = await ctx.send(embed=embed, view=view)
