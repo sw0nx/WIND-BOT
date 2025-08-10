@@ -6,7 +6,7 @@ import datetime
 import pytz
 from flask import Flask
 import threading
-import asyncio  # 추가
+import asyncio
 
 # ==== 설정 ====
 TOKEN = os.getenv("BOT_TOKEN")  # Zeabur 환경변수 지원
@@ -33,7 +33,7 @@ def home():
     return "✅ Bot is running on Zeabur!"
 
 def run_web():
-    port = int(os.getenv("PORT", 8080))  # Zeabur에서 할당받은 포트 사용
+    port = int(os.getenv("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
