@@ -1,6 +1,7 @@
 import os
+import re
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord.ui import View, Select, Button
 import datetime
 import pytz
@@ -9,12 +10,11 @@ import threading
 import asyncio
 
 # ==== 설정 ====
-TOKEN = os.getenv("BOT_TOKEN")  # Zeabur 환경변수 지원
+TOKEN = os.getenv("BOT_TOKEN")  # 환경변수로 토큰 설정
+CATEGORY_ID = 1398263224062836829
 TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"
 LOG_CHANNEL_ID = 1398267597299912744
-ADMIN_ROLE_ID = 123456789012345678
-OWNER_ROLE_ID = 987654321098765432
-AUTO_CLOSE_HOURS = 24  # 티켓 자동 닫기 시간
+UPDATE_INTERVAL = 5  # 5초마다 시간 갱신
 # ==============
 
 intents = discord.Intents.default()
@@ -26,44 +26,54 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 kst = pytz.timezone('Asia/Seoul')
 
-# ==== Flask 서버 (Zeabur용) ====
+# ==== Flask (keep-alive) ====
 app = Flask(__name__)
-
 @app.route('/')
 def home():
-    return "✅ Bot is running on Zeabur!"
+    return "✅ Bot is running!"
 
 def run_web():
     port = int(os.getenv("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    threading.Thread(target=run_web).start()
-# ==================================
+    threading.Thread(target=run_web, daemon=True).start()
 
-# ====== 버튼 클래스 ======
+# ---------- Helper ----------
+def sanitize_channel_name(s: str) -> str:
+    s = s.lower()
+    s = re.sub(r'[^a-z0-9\- _]', '', s)
+    s = s.replace(' ', '-')
+    return s[:90]
+
+def korean_now_str():
+    now = datetime.datetime.now(kst)
+    return now.strftime("%Y년 %m월 %d일 %H:%M:%S")
+
+# ---------- UI ----------
 class CloseTicketButton(Button):
     def __init__(self):
-        super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, emoji="🔒")
+        super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="wind_close_ticket")
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        if interaction.channel.name.startswith("ticket-"):
+        if interaction.channel and interaction.channel.name.startswith("ticket-"):
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
-            now_kst = datetime.datetime.now(kst)
             if log_channel:
                 await log_channel.send(
                     embed=discord.Embed(
                         title="티켓 닫힘",
                         description=f"**채널:** {interaction.channel.name}\n"
-                                    f"**닫은 유저:** {interaction.user.mention} (`{interaction.user}`)\n"
-                                    f"**시간:** {now_kst.strftime('%Y년 %m월 %d일 %H:%M:%S')}",
+                                    f"**닫은 유저:** {interaction.user.mention}\n"
+                                    f"**시간:** {korean_now_str()}",
                         color=0x000000
                     )
                 )
-            await interaction.channel.delete()
+            try:
+                await interaction.channel.delete()
+            except:
+                pass
 
-# ====== 셀렉트 메뉴 클래스 ======
 class ShopSelect(Select):
     def __init__(self):
         options = [
@@ -71,19 +81,21 @@ class ShopSelect(Select):
             discord.SelectOption(label="문의하기", description="문의사항 티켓 열기", emoji="🎫"),
             discord.SelectOption(label="파트너 & 상단배너", description="파트너 또는 상단배너 문의", emoji="👑")
         ]
-        super().__init__(placeholder="원하는 항목을 선택하세요", options=options)
+        super().__init__(placeholder="원하는 항목을 선택하세요", options=options, custom_id="wind_shop_select")
 
     async def callback(self, interaction: discord.Interaction):
-        selected_item = self.values[0]
         await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
-        category = discord.utils.get(guild.categories, name=TICKET_CATEGORY_NAME) or await guild.create_category(TICKET_CATEGORY_NAME)
+        category = guild.get_channel(int(CATEGORY_ID))
+        if not category or not isinstance(category, discord.CategoryChannel):
+            category = discord.utils.get(guild.categories, name=TICKET_CATEGORY_NAME)
+            if not category:
+                category = await guild.create_category(TICKET_CATEGORY_NAME)
 
-        ticket_name = f"ticket-{interaction.user.name}"
-        existing_ticket = discord.utils.get(guild.channels, name=ticket_name)
-        if existing_ticket:
-            await interaction.followup.send(f"⚠ 이미 티켓이 존재합니다: {existing_ticket.mention}", ephemeral=True)
+        channel_name = sanitize_channel_name(f"ticket-{self.values[0]}-{interaction.user.name}")
+        if discord.utils.get(guild.channels, name=channel_name):
+            await interaction.followup.send(f"⚠ 이미 티켓이 존재합니다.", ephemeral=True)
             return
 
         overwrites = {
@@ -91,96 +103,88 @@ class ShopSelect(Select):
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
-        ticket_channel = await guild.create_text_channel(ticket_name, category=category, overwrites=overwrites)
+        ticket_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
 
-        admin_role = guild.get_role(ADMIN_ROLE_ID)
-        owner_role = guild.get_role(OWNER_ROLE_ID)
-        now_kst = datetime.datetime.now(kst)
-
-        # 알림 임베드
+        now_ts = int(datetime.datetime.now(kst).timestamp())
         mention_embed = discord.Embed(
             title="티켓 알림",
-            description=f"{admin_role.mention if admin_role else ''} {owner_role.mention if owner_role else ''}\n"
-                        f"💬 담당자가 곧 응답할 예정입니다.",
+            description="💬 담당자가 곧 응답할 예정입니다.",
             color=0x000000
         )
-        mention_embed.add_field(name="티켓 생성자", value=f"{interaction.user.mention} (`{interaction.user}`)", inline=True)
-        mention_embed.add_field(name="선택 항목", value=selected_item, inline=True)
-        mention_embed.add_field(name="생성 시간", value=now_kst.strftime("%Y년 %m월 %d일 %H:%M:%S"), inline=False)
+        mention_embed.add_field(name="선택 항목", value=self.values[0], inline=True)
+        mention_embed.add_field(name="생성 시간", value=f"<t:{now_ts}:F>", inline=False)
         await ticket_channel.send(embed=mention_embed)
 
-        # 안내 임베드
         guide_embed = discord.Embed(
-            title=f"{selected_item} 티켓 생성됨",
+            title=f"{self.values[0]} 티켓 생성됨",
             description=f"{interaction.user.mention}님의 요청입니다.\n아래 버튼을 눌러 티켓을 닫을 수 있습니다.",
             color=0x000000
-        )
-        guide_embed.set_footer(text="WIND Ticket Bot")
-        await ticket_channel.send(embed=guide_embed, view=View(timeout=None).add_item(CloseTicketButton()))
+        ).set_footer(text="WIND Ticket Bot")
+        await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
 
-        await interaction.followup.send(f"✅ `{selected_item}` 항목의 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
+        await interaction.followup.send(f"✅ `{self.values[0]}` 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
-        # 로그
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             await log_channel.send(
                 embed=discord.Embed(
                     title="📥 티켓 생성",
-                    description=f"**채널:** {ticket_channel.mention}\n"
-                                f"**생성자:** {interaction.user.mention} (`{interaction.user}`)\n"
-                                f"**항목:** `{selected_item}`\n"
-                                f"**시간:** {now_kst.strftime('%Y년 %m월 %d일 %H:%M:%S')}",
+                    description=f"**채널:** {ticket_channel.mention}\n**생성자:** {interaction.user.mention}\n**항목:** `{self.values[0]}`\n**시간:** {korean_now_str()}",
                     color=0x000000
                 )
             )
 
-        # 자동 닫기 예약
-        await asyncio.sleep(AUTO_CLOSE_HOURS * 3600)
-        if ticket_channel and ticket_channel.exists():
-            await ticket_channel.send("⏳ 시간이 초과되어 티켓이 자동으로 닫힙니다.")
-            await ticket_channel.delete()
-
-# ====== 뷰 클래스 ======
 class ShopView(View):
     def __init__(self):
-        super().__init__(timeout=None)  # 무제한 작동
+        super().__init__(timeout=None)
         self.add_item(ShopSelect())
 
-# ====== 명령어 ======
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def 상점(ctx):
-    now_kst = datetime.datetime.now(kst)
-    time_str = now_kst.strftime("%Y년 %m월 %d일 %H:%M:%S")
+# ---------- Update Time Loop ----------
+async def update_message_time_loop(message: discord.Message):
+    while True:
+        await asyncio.sleep(UPDATE_INTERVAL)
+        try:
+            message = await message.channel.fetch_message(message.id)
+        except discord.NotFound:
+            break
+        if not message.embeds:
+            break
+        e = message.embeds[0].copy()
+        found_idx = None
+        for i, f in enumerate(e.fields):
+            if f.name == "현재 시간":
+                found_idx = i
+                break
+        if found_idx is not None:
+            e.set_field_at(found_idx, name="현재 시간", value=korean_now_str(), inline=False)
+        else:
+            e.add_field(name="현재 시간", value=korean_now_str(), inline=False)
+        try:
+            await message.edit(embed=e, view=message.components[0] if message.components else None)
+        except:
+            break
 
+# ---------- Command ----------
+@bot.command(name="상점")
+async def shop_cmd(ctx: commands.Context):
     embed = discord.Embed(
         title="WIND RBX 상점",
         description="아래에서 원하는 항목을 선택하세요",
         color=0x000000
     )
-    embed.add_field(name="현재 시간", value=time_str, inline=False)
-    message = await ctx.send(embed=embed, view=ShopView())
+    embed.add_field(name="현재 시간", value=korean_now_str(), inline=False)
+    embed.add_field(name="선택 항목", value="아직 선택 안 함", inline=False)
 
-    # 5초마다 한국어 시간 갱신
-    while True:
-        await asyncio.sleep(5)
-        now_kst = datetime.datetime.now(kst)
-        time_str = now_kst.strftime("%Y년 %m월 %d일 %H:%M:%S")
-        embed.set_field_at(0, name="현재 시간", value=time_str, inline=False)
-        await message.edit(embed=embed, view=ShopView())
+    view = ShopView()
+    message = await ctx.send(embed=embed, view=view)
+    bot.add_view(view)
+    bot.loop.create_task(update_message_time_loop(message))
 
-# ====== 봇 상태 표시 ======
-@tasks.loop(seconds=60)
-async def update_status():
-    total_tickets = sum(1 for ch in bot.get_all_channels() if ch.name.startswith("ticket-"))
-    await bot.change_presence(
-        activity=discord.Game(name=f"🎫 티켓 {total_tickets}개 처리 중")
-    )
-
+# ---------- On Ready ----------
 @bot.event
 async def on_ready():
-    print(f"✅ {bot.user} 로 로그인됨")
-    update_status.start()
+    bot.add_view(ShopView())
+    print(f"✅ 로그인됨: {bot.user} (ID: {bot.user.id})")
 
 # 실행
 keep_alive()
