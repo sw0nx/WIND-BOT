@@ -57,7 +57,7 @@ class CloseTicketButton(Button):
                         title="티켓 닫힘",
                         description=f"**채널:** {interaction.channel.name}\n"
                                     f"**닫은 유저:** {interaction.user.mention} (`{interaction.user}`)\n"
-                                    f"**시간:** {now_kst.strftime('%Y-%m-%d %H:%M:%S')}",
+                                    f"**시간:** {now_kst.strftime('%Y년 %m월 %d일 %H:%M:%S')}",
                         color=0x000000
                     )
                 )
@@ -96,7 +96,6 @@ class ShopSelect(Select):
         admin_role = guild.get_role(ADMIN_ROLE_ID)
         owner_role = guild.get_role(OWNER_ROLE_ID)
         now_kst = datetime.datetime.now(kst)
-        timestamp_kst = int(now_kst.timestamp())
 
         # 알림 임베드
         mention_embed = discord.Embed(
@@ -107,7 +106,7 @@ class ShopSelect(Select):
         )
         mention_embed.add_field(name="티켓 생성자", value=f"{interaction.user.mention} (`{interaction.user}`)", inline=True)
         mention_embed.add_field(name="선택 항목", value=selected_item, inline=True)
-        mention_embed.add_field(name="생성 시간", value=f"<t:{timestamp_kst}:F>", inline=False)
+        mention_embed.add_field(name="생성 시간", value=now_kst.strftime("%Y년 %m월 %d일 %H:%M:%S"), inline=False)
         await ticket_channel.send(embed=mention_embed)
 
         # 안내 임베드
@@ -117,7 +116,7 @@ class ShopSelect(Select):
             color=0x000000
         )
         guide_embed.set_footer(text="WIND Ticket Bot")
-        await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
+        await ticket_channel.send(embed=guide_embed, view=View(timeout=None).add_item(CloseTicketButton()))
 
         await interaction.followup.send(f"✅ `{selected_item}` 항목의 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
@@ -130,7 +129,7 @@ class ShopSelect(Select):
                     description=f"**채널:** {ticket_channel.mention}\n"
                                 f"**생성자:** {interaction.user.mention} (`{interaction.user}`)\n"
                                 f"**항목:** `{selected_item}`\n"
-                                f"**시간:** {now_kst.strftime('%Y-%m-%d %H:%M:%S')}",
+                                f"**시간:** {now_kst.strftime('%Y년 %m월 %d일 %H:%M:%S')}",
                     color=0x000000
                 )
             )
@@ -144,7 +143,7 @@ class ShopSelect(Select):
 # ====== 뷰 클래스 ======
 class ShopView(View):
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(timeout=None)  # 무제한 작동
         self.add_item(ShopSelect())
 
 # ====== 명령어 ======
@@ -152,22 +151,22 @@ class ShopView(View):
 @commands.has_permissions(administrator=True)
 async def 상점(ctx):
     now_kst = datetime.datetime.now(kst)
-    timestamp_kst = int(now_kst.timestamp())
+    time_str = now_kst.strftime("%Y년 %m월 %d일 %H:%M:%S")
 
     embed = discord.Embed(
-        title=f"WIND RBX 상점 - 요청자: {ctx.author}",
+        title="WIND RBX 상점",
         description="아래에서 원하는 항목을 선택하세요",
         color=0x000000
     )
-    embed.add_field(name="현재 시간", value=f"<t:{timestamp_kst}:F>", inline=False)
+    embed.add_field(name="현재 시간", value=time_str, inline=False)
     message = await ctx.send(embed=embed, view=ShopView())
 
-    # 5초마다 시간 갱신
+    # 5초마다 한국어 시간 갱신
     while True:
         await asyncio.sleep(5)
         now_kst = datetime.datetime.now(kst)
-        timestamp_kst = int(now_kst.timestamp())
-        embed.set_field_at(0, name="현재 시간", value=f"<t:{timestamp_kst}:F>", inline=False)
+        time_str = now_kst.strftime("%Y년 %m월 %d일 %H:%M:%S")
+        embed.set_field_at(0, name="현재 시간", value=time_str, inline=False)
         await message.edit(embed=embed, view=ShopView())
 
 # ====== 봇 상태 표시 ======
