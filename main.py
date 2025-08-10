@@ -16,8 +16,8 @@ TOKEN = os.getenv("BOT_TOKEN")  # 환경변수에 토큰 넣어주세요
 CATEGORY_ID = 1398263224062836829  # 티켓 생성할 카테고리 ID (정수)
 TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"  # 카테고리 없을 때 생성할 이름
 LOG_CHANNEL_ID = 1398267597299912744  # 로그 채널 ID
-ADMIN_ROLE_ID = 123456789012345678  # 관리자 역할 ID
-OWNER_ROLE_ID = 987654321098765432  # 오너 역할 ID
+ADMIN_ROLE_ID = 123456789012345678  # 관리자 역할 ID (옵션)
+OWNER_ROLE_ID = 987654321098765432  # 오너 역할 ID (옵션)
 UPDATE_INTERVAL = 5  # 임베드 시간 갱신 초 (5초)
 MAX_LOG_MESSAGES = 1000  # 채팅 로그 저장 시 가져올 최대 메시지 수
 # ==============
@@ -47,14 +47,15 @@ def keep_alive():
 
 # ---------- Helpers ----------
 def sanitize_channel_name(s: str) -> str:
+    # 허용 문자만 남기고 공백은 대시로
     s = s.lower()
     s = re.sub(r'[^a-z0-9\-_ ]', '', s)
     s = s.replace(' ', '-')
     return s[:90]
 
 def korean_now_str():
-    now = datetime.datetime.now(kst)
     # 요청하신 포맷: 08월 11일 04:16:05
+    now = datetime.datetime.now(kst)
     return now.strftime("%m월 %d일 %H:%M:%S")
 
 async def save_channel_logs_and_send(channel: discord.TextChannel, log_channel: discord.TextChannel):
@@ -64,10 +65,10 @@ async def save_channel_logs_and_send(channel: discord.TextChannel, log_channel: 
     try:
         msgs = []
         async for m in channel.history(limit=MAX_LOG_MESSAGES, oldest_first=True):
+            # created_at은 UTC이므로 KST로 변환
             timestamp = m.created_at.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S")
             author = f"{m.author} ({m.author.id})"
             content = m.content or ""
-            # include attachments as URLs
             att_urls = " ".join(att.url for att in m.attachments) if m.attachments else ""
             line = f"[{timestamp}] {author}: {content} {att_urls}"
             msgs.append(line)
@@ -80,13 +81,13 @@ async def save_channel_logs_and_send(channel: discord.TextChannel, log_channel: 
         fname = f"ticket-log-{channel.name}.txt"
         await log_channel.send(content=f"🗂 티켓 로그: {channel.name}", file=discord.File(fp=bio, filename=fname))
     except Exception:
-        # 만약 로그 전송 실패하면 콘솔 출력
         traceback.print_exc()
 
 # ---------- UI 컴포넌트 ----------
 class CloseTicketButton(Button):
     def __init__(self):
-        super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="wind_close_ticket")
+        # custom_id 지정해서 persistent 하게 만듭니다.
+        super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="wind_close_ticket_v1")
 
     async def callback(self, interaction: discord.Interaction):
         # 티켓 닫을 때: 로그 저장 -> 로그채널에 파일 업로드 -> 채널 삭제
@@ -114,7 +115,7 @@ class CloseTicketButton(Button):
             await channel.delete()
         except Exception as e:
             traceback.print_exc()
-            # 실패 시 관리자에게 DM/로그
+            # 실패 시 관리자에게 알림
             if log_channel:
                 await log_channel.send(embed=discord.Embed(
                     title="티켓 채널 삭제 실패",
@@ -129,7 +130,8 @@ class ShopSelect(Select):
             discord.SelectOption(label="문의하기", description="문의사항 티켓 열기", emoji="🎫"),
             discord.SelectOption(label="파트너 & 상단배너", description="파트너 또는 상단배너 문의", emoji="👑")
         ]
-        super().__init__(placeholder="원하는 항목을 선택하세요", options=options, custom_id="wind_shop_select")
+        # custom_id 지정 -> persistent
+        super().__init__(placeholder="원하는 항목을 선택하세요", options=options, custom_id="wind_shop_select_v1")
 
     async def callback(self, interaction: discord.Interaction):
         # 선택 시 티켓 생성 (중복방지: 같은 유저가 이미 가진 티켓 탐지)
@@ -166,8 +168,8 @@ class ShopSelect(Select):
                 if not isinstance(ch, discord.TextChannel):
                     continue
                 cname = ch.name.lower()
+                # 유저 이름 혹은 id가 들어간 티켓 채널을 같은 유저의 것으로 판단
                 if cname.startswith("ticket-") and (uname in cname or uid in cname or ch.permissions_for(interaction.user).read_messages):
-                    # 마지막 조건은 유저에게 읽기 권한이 있는 ticket- 채널(즉 자기 티켓)을 걸러냄
                     return ch
             return None
 
@@ -179,14 +181,13 @@ class ShopSelect(Select):
                 await interaction.followup.send("⚠ 이미 티켓이 존재합니다 (채널을 표시할 수 없음).", ephemeral=True)
             return
 
-        # 채널 이름 생성
-        base = f"ticket-{selected_item}-{interaction.user.name}"
+        # 채널 이름 생성: 항목-유저이름-유저id 로 유니크하게
+        base = f"ticket-{selected_item}-{interaction.user.name}-{interaction.user.id}"
         channel_name = sanitize_channel_name(base)
 
-        # 중복 이름 충돌(예상치 못한 경우) 다시 체크
+        # 만약 동일 이름 채널이 이미 있으면 (희박) 뒤에 타임스탬프 추가
         if discord.utils.get(guild.channels, name=channel_name):
-            # 채널 이름에 user id를 붙여 유니크하게 만들기
-            channel_name = sanitize_channel_name(f"{channel_name}-{interaction.user.id}")
+            channel_name = sanitize_channel_name(f"{channel_name}-{int(datetime.datetime.now().timestamp())}")
 
         # 권한 설정: 기본 비공개, 유저 허용, 봇 허용, 관리자/오너 역할 허용
         overwrites = {
@@ -195,15 +196,17 @@ class ShopSelect(Select):
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         try:
-            admin_role = guild.get_role(int(ADMIN_ROLE_ID)) if ADMIN_ROLE_ID else None
-            owner_role = guild.get_role(int(OWNER_ROLE_ID)) if OWNER_ROLE_ID else None
-            if admin_role:
-                overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-            if owner_role:
-                overwrites[owner_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            if ADMIN_ROLE_ID:
+                admin_role = guild.get_role(int(ADMIN_ROLE_ID))
+                if admin_role:
+                    overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            if OWNER_ROLE_ID:
+                owner_role = guild.get_role(int(OWNER_ROLE_ID))
+                if owner_role:
+                    overwrites[owner_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
         except Exception:
             # role 접근 문제 무시하고 진행
-            pass
+            traceback.print_exc()
 
         # 티켓 채널 생성
         try:
@@ -292,6 +295,7 @@ async def shop_cmd(ctx: commands.Context):
         color=0x000000
     )
     embed.add_field(name="현재 시간", value=korean_now_str(), inline=False)
+
     view = ShopView()
     try:
         message = await ctx.send(embed=embed, view=view)
@@ -313,7 +317,10 @@ async def shop_cmd(ctx: commands.Context):
 @bot.event
 async def on_ready():
     # 재시작시에도 view 등록 (persistent)
-    bot.add_view(ShopView())
+    try:
+        bot.add_view(ShopView())
+    except Exception:
+        pass
     print(f"✅ 로그인됨: {bot.user} (ID: {bot.user.id})")
 
 # 실행
