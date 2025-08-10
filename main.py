@@ -54,7 +54,9 @@ class CloseTicketButton(Button):
                 await log_channel.send(
                     embed=discord.Embed(
                         title="티켓 닫힘",
-                        description=f"**채널:** {interaction.channel.name}\n**닫은 유저:** {interaction.user.mention}\n**시간:** {now_kst.strftime('%Y-%m-%d %H:%M:%S')}",
+                        description=f"**채널:** {interaction.channel.name}\n"
+                                    f"**닫은 유저:** {interaction.user.mention} (`{interaction.user}`)\n"
+                                    f"**시간:** {now_kst.strftime('%Y-%m-%d %H:%M:%S')}",
                         color=0x000000
                     )
                 )
@@ -71,6 +73,7 @@ class ShopSelect(Select):
         super().__init__(placeholder="원하는 항목을 선택하세요", options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        selected_item = self.values[0]
         await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
@@ -96,24 +99,26 @@ class ShopSelect(Select):
 
         # 알림 임베드
         mention_embed = discord.Embed(
-            title="📩 새 티켓 알림",
-            description=f"{admin_role.mention if admin_role else ''} {owner_role.mention if owner_role else ''}\n💬 담당자가 곧 응답할 예정입니다.",
+            title="티켓 알림",
+            description=f"{admin_role.mention if admin_role else ''} {owner_role.mention if owner_role else ''}\n"
+                        f"💬 담당자가 곧 응답할 예정입니다.",
             color=0x000000
         )
-        mention_embed.add_field(name="티켓 생성자", value=interaction.user.mention, inline=True)
-        mention_embed.add_field(name="생성 시간", value=f"<t:{timestamp_kst}:F>", inline=True)
+        mention_embed.add_field(name="티켓 생성자", value=f"{interaction.user.mention} (`{interaction.user}`)", inline=True)
+        mention_embed.add_field(name="선택 항목", value=selected_item, inline=True)
+        mention_embed.add_field(name="생성 시간", value=f"<t:{timestamp_kst}:F>", inline=False)
         await ticket_channel.send(embed=mention_embed)
 
         # 안내 임베드
         guide_embed = discord.Embed(
-            title=f"🎫 {self.values[0]} 티켓 생성됨",
-            description="아래 버튼을 눌러 티켓을 닫을 수 있습니다.",
+            title=f"{selected_item} 티켓 생성됨",
+            description=f"{interaction.user.mention}님의 요청입니다.\n아래 버튼을 눌러 티켓을 닫을 수 있습니다.",
             color=0x000000
         )
         guide_embed.set_footer(text="WIND Ticket Bot")
         await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
 
-        await interaction.followup.send(f"✅ 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
+        await interaction.followup.send(f"✅ `{selected_item}` 항목의 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
         # 로그
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -121,7 +126,10 @@ class ShopSelect(Select):
             await log_channel.send(
                 embed=discord.Embed(
                     title="📥 티켓 생성",
-                    description=f"**채널:** {ticket_channel.mention}\n**생성자:** {interaction.user.mention}\n**항목:** `{self.values[0]}`\n**시간:** {now_kst.strftime('%Y-%m-%d %H:%M:%S')}",
+                    description=f"**채널:** {ticket_channel.mention}\n"
+                                f"**생성자:** {interaction.user.mention} (`{interaction.user}`)\n"
+                                f"**항목:** `{selected_item}`\n"
+                                f"**시간:** {now_kst.strftime('%Y-%m-%d %H:%M:%S')}",
                     color=0x000000
                 )
             )
@@ -139,7 +147,7 @@ async def 상점(ctx):
     timestamp_kst = int(now_kst.timestamp())
 
     embed = discord.Embed(
-        title="WIND RBX 상점",
+        title=f"WIND RBX 상점 - 요청자: {ctx.author}",
         description="아래에서 원하는 항목을 선택하세요",
         color=0x000000
     )
