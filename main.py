@@ -5,7 +5,7 @@ import datetime
 import pytz
 
 # ==== 설정 부분 ====
-TOKEN = "DISCORD_BOT"
+TOKEN = "TOKEN"
 TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"
 LOG_CHANNEL_ID = 1398267597299912744
 ADMIN_ROLE_ID = 123456789012345678
