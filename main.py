@@ -189,7 +189,7 @@ class ShopView(View):
 async def shop_cmd(ctx: commands.Context):
     embed = discord.Embed(
         title="구매하기",
-        description="구매 또는 문의를 원하시면\n아래 선택하기 버튼을 눌러주세요",
+        description="구매 또는 문의를 원하시면\n아래 항목 버튼을 눌러주세요",
         color=0x000000
     )
     view = ShopView()
