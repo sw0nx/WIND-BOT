@@ -6,6 +6,7 @@ import datetime
 import pytz
 from flask import Flask
 import threading
+import asyncio  # 추가
 
 # ==== 설정 ====
 TOKEN = os.getenv("BOT_TOKEN")  # Zeabur 환경변수 지원
@@ -39,7 +40,6 @@ def keep_alive():
     threading.Thread(target=run_web).start()
 # ==================================
 
-
 # ====== 버튼 클래스 ======
 class CloseTicketButton(Button):
     def __init__(self):
@@ -55,11 +55,10 @@ class CloseTicketButton(Button):
                     embed=discord.Embed(
                         title="티켓 닫힘",
                         description=f"**채널:** {interaction.channel.name}\n**닫은 유저:** {interaction.user.mention}\n**시간:** {now_kst.strftime('%Y-%m-%d %H:%M:%S')}",
-                        color=0x000000  # 검정
+                        color=0x000000
                     )
                 )
             await interaction.channel.delete()
-
 
 # ====== 셀렉트 메뉴 클래스 ======
 class ShopSelect(Select):
@@ -69,7 +68,7 @@ class ShopSelect(Select):
             discord.SelectOption(label="문의하기", description="문의사항 티켓 열기", emoji="🎫"),
             discord.SelectOption(label="파트너 & 상단배너", description="파트너 또는 상단배너 문의", emoji="👑")
         ]
-        super().__init__(placeholder="⬇ 원하는 항목을 선택하세요", options=options)
+        super().__init__(placeholder="원하는 항목을 선택하세요", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -95,7 +94,7 @@ class ShopSelect(Select):
         now_kst = datetime.datetime.now(kst)
         timestamp_kst = int(now_kst.timestamp())
 
-        # 알림 임베드 (검정)
+        # 알림 임베드
         mention_embed = discord.Embed(
             title="📩 새 티켓 알림",
             description=f"{admin_role.mention if admin_role else ''} {owner_role.mention if owner_role else ''}\n💬 담당자가 곧 응답할 예정입니다.",
@@ -105,7 +104,7 @@ class ShopSelect(Select):
         mention_embed.add_field(name="생성 시간", value=f"<t:{timestamp_kst}:F>", inline=True)
         await ticket_channel.send(embed=mention_embed)
 
-        # 안내 임베드 (검정)
+        # 안내 임베드
         guide_embed = discord.Embed(
             title=f"🎫 {self.values[0]} 티켓 생성됨",
             description="아래 버튼을 눌러 티켓을 닫을 수 있습니다.",
@@ -116,7 +115,7 @@ class ShopSelect(Select):
 
         await interaction.followup.send(f"✅ 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
-        # 로그 (검정)
+        # 로그
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             await log_channel.send(
@@ -127,13 +126,11 @@ class ShopSelect(Select):
                 )
             )
 
-
 # ====== 뷰 클래스 ======
 class ShopView(View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(ShopSelect())
-
 
 # ====== 명령어 ======
 @bot.command()
@@ -142,13 +139,20 @@ async def 상점(ctx):
     timestamp_kst = int(now_kst.timestamp())
 
     embed = discord.Embed(
-        title="💳 WIND RBX 상점",
-        description="아래에서 원하는 항목을 선택하세요.\n━━━━━━━━━━━━━━━━━━━━",
+        title="WIND RBX 상점",
+        description="아래에서 원하는 항목을 선택하세요",
         color=0x000000
     )
     embed.add_field(name="현재 시간", value=f"<t:{timestamp_kst}:F>", inline=False)
-    await ctx.send(embed=embed, view=ShopView())
+    message = await ctx.send(embed=embed, view=ShopView())
 
+    # 5초마다 시간 갱신
+    while True:
+        await asyncio.sleep(5)
+        now_kst = datetime.datetime.now(kst)
+        timestamp_kst = int(now_kst.timestamp())
+        embed.set_field_at(0, name="현재 시간", value=f"<t:{timestamp_kst}:F>", inline=False)
+        await message.edit(embed=embed, view=ShopView())
 
 # 실행
 keep_alive()
