@@ -3,10 +3,9 @@ from discord.ext import commands
 from discord.ui import View, Select, Button
 import datetime
 import pytz
-import os
 
 # ==== 설정 부분 ====
-TOKEN = os.getenv("DISCORD_TOKEN")  # Render 환경변수에서 불러오기
+TOKEN = "DISCORD_BOT"
 TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"
 LOG_CHANNEL_ID = 1398267597299912744
 ADMIN_ROLE_ID = 123456789012345678
@@ -28,16 +27,14 @@ class CloseTicketButton(Button):
         super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger)
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()  # 상호작용 실패 방지
         if interaction.channel.name.startswith("ticket-"):
+            await interaction.channel.delete()
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
-            now_kst = datetime.datetime.now(kst)
-
             if log_channel:
+                now_kst = datetime.datetime.now(kst)
                 await log_channel.send(
                     f"티켓 닫힘 | 채널: `{interaction.channel.name}` | 닫은 유저: {interaction.user.mention} | 시간: {now_kst.strftime('%Y-%m-%d %H:%M:%S')}"
                 )
-            await interaction.channel.delete()
 
 
 class ShopSelect(Select):
@@ -50,7 +47,6 @@ class ShopSelect(Select):
         super().__init__(placeholder="원하는 항목을 선택하세요", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()  # 상호작용 실패 방지
         guild = interaction.guild
         category = discord.utils.get(guild.categories, name=TICKET_CATEGORY_NAME)
         if not category:
@@ -59,7 +55,7 @@ class ShopSelect(Select):
         ticket_name = f"ticket-{interaction.user.name}"
         existing_channel = discord.utils.get(guild.channels, name=ticket_name)
         if existing_channel:
-            await interaction.followup.send(f"이미 티켓이 존재합니다: {existing_channel.mention}", ephemeral=True)
+            await interaction.response.send_message(f"이미 티켓이 존재합니다: {existing_channel.mention}", ephemeral=False)
             return
 
         overwrites = {
@@ -95,8 +91,7 @@ class ShopSelect(Select):
         guide_embed.set_footer(text=f"WIND Ticket Bot - 윈드 티켓봇 | {now_kst.strftime('%Y-%m-%d %H:%M:%S')}")
 
         await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
-
-        await interaction.followup.send(f"티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
+        await interaction.response.send_message(f"티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=False)
 
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
@@ -123,5 +118,4 @@ async def 상점(ctx):
     await ctx.send(embed=embed, view=ShopView())
 
 
-if __name__ == "__main__":
-    bot.run(TOKEN)
+bot.run(TOKEN)
