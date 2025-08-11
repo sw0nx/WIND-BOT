@@ -115,12 +115,11 @@ class ShopSelect(Select):
 
     async def callback(self, interaction: discord.Interaction):
         selected_item = self.values[0]
-        await interaction.response.defer()  # "선택됨" 표시 없이 초기화 가능하게 함
+        await interaction.response.defer()
         guild = interaction.guild
         if not guild:
             return
 
-        # 카테고리 가져오기
         category = guild.get_channel(CATEGORY_ID) if CATEGORY_ID else None
         if not isinstance(category, discord.CategoryChannel):
             category = discord.utils.get(guild.categories, name=TICKET_CATEGORY_NAME)
@@ -130,18 +129,15 @@ class ShopSelect(Select):
                 except:
                     category = None
 
-        # 기존 티켓 확인
         for ch in guild.channels:
             if isinstance(ch, discord.TextChannel) and ch.permissions_for(interaction.user).read_messages:
                 if ch.name.startswith("ticket-"):
                     await interaction.followup.send(f"⚠ 이미 티켓이 존재합니다: {ch.mention}", ephemeral=True)
                     return
 
-        # 채널 이름
         base = f"ticket-{selected_item}-{interaction.user.name}-{interaction.user.id}"
         channel_name = sanitize_channel_name(base)
 
-        # 권한 설정
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
@@ -154,7 +150,6 @@ class ShopSelect(Select):
         if owner_role:
             overwrites[owner_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
-        # 채널 생성
         ticket_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
 
         guide_embed = discord.Embed(
@@ -164,13 +159,22 @@ class ShopSelect(Select):
         ).set_footer(text="WIND Ticket Bot")
         await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
 
-        # 유저에게 알림
-        await interaction.followup.send(f"✅ `{selected_item}` 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
+        # 관리자, 오너, 생성자 멘션
+        mentions = []
+        if admin_role:
+            mentions.append(admin_role.mention)
+        if owner_role:
+            mentions.append(owner_role.mention)
+        mentions.append(interaction.user.mention)
 
-        # 원래 메뉴 초기화
+        await ticket_channel.send(
+            f"{' '.join(mentions)} 새로운 티켓이 생성되었습니다.",
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True)
+        )
+
+        await interaction.followup.send(f"✅ `{selected_item}` 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
         await interaction.message.edit(view=ShopView())
 
-        # 로그 채널 기록
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             await log_channel.send(embed=discord.Embed(
@@ -184,7 +188,6 @@ class ShopView(View):
         super().__init__(timeout=None)
         self.add_item(ShopSelect())
 
-# ---------- 커맨드 ----------
 @bot.command(name="상점")
 async def shop_cmd(ctx: commands.Context):
     embed = discord.Embed(
@@ -196,12 +199,10 @@ async def shop_cmd(ctx: commands.Context):
     await ctx.send(embed=embed, view=view)
     bot.add_view(view)
 
-# ---------- on_ready ----------
 @bot.event
 async def on_ready():
     bot.add_view(ShopView())
     print(f"✅ 로그인됨: {bot.user} (ID: {bot.user.id})")
 
-# 실행
 keep_alive()
 bot.run(TOKEN)
