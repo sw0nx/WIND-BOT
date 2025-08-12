@@ -27,20 +27,27 @@ intents.guilds = True
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+class MyBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents)
+
+    async def setup_hook(self):
+        # persistent views 등록
+        self.add_view(ShopView())
+        self.add_view(CloseTicketView())
+        print("Persistent views registered.")
+
+bot = MyBot()
 kst = pytz.timezone('Asia/Seoul')
 
 # ---- keepalive (Flask) ----
 app = Flask(__name__)
-
 @app.route('/')
 def home():
     return "✅ Bot is running!"
-
 def run_web():
     port = int(os.getenv("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
-
 def keep_alive():
     threading.Thread(target=run_web, daemon=True).start()
 
@@ -75,7 +82,11 @@ class CloseTicketButton(Button):
         super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="wind_close_ticket_v1")
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        try:
+            await interaction.response.send_message("티켓을 닫는 중입니다...", ephemeral=True)
+        except discord.InteractionResponded:
+            pass
+
         channel = interaction.channel
         if not channel or not channel.name.startswith("ticket-"):
             await interaction.followup.send("이 버튼은 티켓 채널에서만 사용할 수 있습니다.", ephemeral=True)
@@ -86,7 +97,7 @@ class CloseTicketButton(Button):
             if log_channel:
                 await log_channel.send(embed=discord.Embed(
                     title="티켓 닫힘 (예정)",
-                    description=f"채널 `{channel.name}`이(가) 닫힙니다. 로그를 저장합니다...",
+                    description=f"채널 `{channel.name}`이 로그 저장 후 닫힙니다.",
                     color=0x000000
                 ))
                 await save_channel_logs_and_send(channel, log_channel)
@@ -100,9 +111,14 @@ class CloseTicketButton(Button):
             if log_channel:
                 await log_channel.send(embed=discord.Embed(
                     title="티켓 채널 삭제 실패",
-                    description=f"채널 `{channel.name}` 삭제 중 오류가 발생했습니다:\n```\n{e}\n```",
+                    description=f"채널 `{channel.name}` 삭제 중 오류:\n```\n{e}\n```",
                     color=discord.Color.red()
                 ))
+
+class CloseTicketView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(CloseTicketButton())
 
 class ShopSelect(Select):
     def __init__(self):
@@ -129,12 +145,6 @@ class ShopSelect(Select):
                 except:
                     category = None
 
-        for ch in guild.channels:
-            if isinstance(ch, discord.TextChannel) and ch.permissions_for(interaction.user).read_messages:
-                if ch.name.startswith("ticket-"):
-                    await interaction.followup.send(f"⚠ 이미 티켓이 존재합니다: {ch.mention}", ephemeral=True)
-                    return
-
         base = f"ticket-{selected_item}-{interaction.user.name}-{interaction.user.id}"
         channel_name = sanitize_channel_name(base)
 
@@ -154,12 +164,11 @@ class ShopSelect(Select):
 
         guide_embed = discord.Embed(
             title=f"{selected_item} 티켓 생성됨",
-            description="💬 담당자가 곧 응답할 예정입니다.\n아래 버튼을 눌러 티켓을 닫을 수 있습니다.",
+            description="담당자가 곧 응답합니다.\n아래 버튼으로 티켓을 닫을 수 있습니다.",
             color=0x000000
         ).set_footer(text="WIND Ticket Bot")
-        await ticket_channel.send(embed=guide_embed, view=View().add_item(CloseTicketButton()))
+        await ticket_channel.send(embed=guide_embed, view=CloseTicketView())
 
-        # 관리자, 오너, 생성자 멘션
         mentions = []
         if admin_role:
             mentions.append(admin_role.mention)
@@ -179,7 +188,7 @@ class ShopSelect(Select):
         if log_channel:
             await log_channel.send(embed=discord.Embed(
                 title="📥 티켓 생성",
-                description=f"**채널:** {ticket_channel.mention}\n**생성자:** {interaction.user.mention} ({interaction.user.id})\n**항목:** `{selected_item}`",
+                description=f"채널: {ticket_channel.mention}\n생성자: {interaction.user.mention} ({interaction.user.id})\n항목: `{selected_item}`",
                 color=0x000000
             ))
 
@@ -192,16 +201,13 @@ class ShopView(View):
 async def shop_cmd(ctx: commands.Context):
     embed = discord.Embed(
         title="구매하기",
-        description="구매 또는 문의를 원하시면\n아래 항목 버튼을 눌러주세요",
+        description="구매 또는 문의를 원하시면 아래 항목을 선택해주세요.",
         color=0x000000
     )
-    view = ShopView()
-    await ctx.send(embed=embed, view=view)
-    bot.add_view(view)
+    await ctx.send(embed=embed, view=ShopView())
 
 @bot.event
 async def on_ready():
-    bot.add_view(ShopView())
     print(f"✅ 로그인됨: {bot.user} (ID: {bot.user.id})")
 
 keep_alive()
