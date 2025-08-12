@@ -32,7 +32,6 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # persistent views 등록
         self.add_view(ShopView())
         self.add_view(CloseTicketView())
         print("Persistent views registered.")
