@@ -32,9 +32,10 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
+        # Persistent View 등록
         self.add_view(ShopView())
         self.add_view(CloseTicketView())
-        print("Persistent views registered.")
+        print("✅ Persistent views registered.")
 
 bot = MyBot()
 kst = pytz.timezone('Asia/Seoul')
@@ -126,7 +127,11 @@ class ShopSelect(Select):
             discord.SelectOption(label="문의하기", description="문의사항 티켓 열기", emoji="🎫"),
             discord.SelectOption(label="파트너 & 상단배너", description="파트너 또는 상단배너 문의", emoji="👑")
         ]
-        super().__init__(placeholder="원하는 항목을 선택하세요", options=options, custom_id="wind_shop_select_v1")
+        super().__init__(
+            placeholder="티켓 항목 선택",  # 요청하신 placeholder 그대로
+            options=options,
+            custom_id="wind_shop_select_v1"
+        )
 
     async def callback(self, interaction: discord.Interaction):
         selected_item = self.values[0]
@@ -199,8 +204,7 @@ class ShopView(View):
 @bot.command(name="상점")
 async def shop_cmd(ctx: commands.Context):
     embed = discord.Embed(
-        title="구매하기",
-        description="구매 또는 문의를 원하시면\n아래 항목을 선택해주세요.",
+        description="아래 드롭다운중 하나를 선택해 티켓을 열어주세요.\n\n티켓에서 맨션시 티켓답습니다",
         color=0x000000
     )
     await ctx.send(embed=embed, view=ShopView())
