@@ -177,7 +177,7 @@ class ShopSelect(Select):
         mentions.append(interaction.user.mention)
 
         await ticket_channel.send(
-            f"{' '.join(mentions)} 새로운 티켓이 생성되었습니다.",
+            f"{' '.join(mentions)} 티켓이 생성되었습니다.",
             allowed_mentions=discord.AllowedMentions(roles=True, users=True)
         )
 
@@ -201,7 +201,7 @@ class ShopView(View):
 async def shop_cmd(ctx: commands.Context):
     embed = discord.Embed(
         title="구매하기",
-        description="구매 또는 문의를 원하시면 아래 항목을 선택해주세요.",
+        description="구매 또는 문의를 원하시면\n아래 항목을 선택해주세요.",
         color=0x000000
     )
     await ctx.send(embed=embed, view=ShopView())
