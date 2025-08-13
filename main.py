@@ -202,17 +202,16 @@ async def shop_cmd(ctx: commands.Context):
     embed = discord.Embed(
         title="구매하기",
         description=(
-            "**<a:emoji_10:1404769015439687701>주의사항<a:emoji_10:1404769015439687701>\n"
-            "• <#1398260667768635392> 필독 부탁드립니다<a:emoji_5:1404764522300047431>\n"
+            "# <a:emoji_10:1404769015439687701>주의사항<a:emoji_10:1404769015439687701>\n"
+            "**• <#1398260667768635392> 필독 부탁드립니다<a:emoji_5:1404764522300047431>\n"
             "• <#1398261912852103208> 재고 확인하고 티켓 열기<a:emoji_5:1404764522300047431>\n"
             "• 장난문의는 제재 당할 수도 있습니다<a:emoji_5:1404764522300047431>\n"
             "• 티켓 열고 잠수 탈 시 하루 탐아 당할 수 있습니다<a:emoji_5:1404764522300047431>\n"
-            "• 입금 하실 때 밑에 사진처럼 보내주세요<a:emoji_5:1404764522300047431>**"
         ),
         color=0x000000
     )
     embed.set_image(
-        url="https://cdn.discordapp.com/attachments/1401138683410645053/1405094454934634578/IMG_0637.png"
+        url="https://cdn.discordapp.com/attachments/1398301252776886395/1404745170788028426/45435345.gif?ex=689d9fe3&is=689c4e63&hm=d978c434f41e8bc9514f60f5f02a9047a6961b728ada5a323767f8ebe4b02a2f&"
     )
     await ctx.send(embed=embed, view=ShopView())
 
