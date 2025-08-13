@@ -200,7 +200,7 @@ class ShopView(View):
 @bot.command(name="상점")
 async def shop_cmd(ctx: commands.Context):
     embed = discord.Embed(
-        title="구매하기",
+        title="",
         description=(
             "# <a:emoji_10:1404769015439687701>주의사항<a:emoji_10:1404769015439687701>\n"
             "**• <#1398260667768635392> 필독 부탁드립니다<a:emoji_5:1404764522300047431>\n"
