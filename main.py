@@ -32,7 +32,6 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # persistent views 등록
         self.add_view(ShopView())
         self.add_view(CloseTicketView())
         print("Persistent views registered.")
@@ -123,11 +122,17 @@ class CloseTicketView(View):
 class ShopSelect(Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="구매하기", description="로블록스 아이템 또는 로벅스 구매", emoji="🛒"),
-            discord.SelectOption(label="문의하기", description="문의사항 티켓 열기", emoji="🎫"),
-            discord.SelectOption(label="파트너 & 상단배너", description="파트너 또는 상단배너 문의", emoji="👑")
+            discord.SelectOption(
+                label="구매하기",
+                description="로블록스 아이템 또는 로벅스 구매",
+                emoji="🛒"
+            )
         ]
-        super().__init__(placeholder="원하는 항목을 선택하세요", options=options, custom_id="wind_shop_select_v1")
+        super().__init__(
+            placeholder="원하는 항목을 선택하세요",
+            options=options,
+            custom_id="wind_shop_select_v1"
+        )
 
     async def callback(self, interaction: discord.Interaction):
         selected_item = self.values[0]
