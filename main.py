@@ -77,47 +77,24 @@ class CloseTicketButton(Button):
 
     async def callback(self, interaction: discord.Interaction):
         channel = interaction.channel
-        if not channel.name.startswith("ticket-"):
+        if not isinstance(channel, discord.TextChannel) or not channel.name.startswith("ticket-"):
             await interaction.response.send_message("이 버튼은 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
             return
 
         await interaction.response.send_message("티켓을 닫는 중입니다...", ephemeral=True)
 
+        # 로그 채널로 기록 전송
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
+        if isinstance(log_channel, discord.TextChannel):
             await save_channel_logs_and_send(channel, log_channel)
 
-        await channel.delete(reason="티켓 닫기")
-
-class StatusInProgressButton(Button):
-    def __init__(self):
-        super().__init__(label="처리중", style=discord.ButtonStyle.primary, custom_id="status_inprogress")
-
-    async def callback(self, interaction: discord.Interaction):
-        if not is_owner(interaction):
-            await interaction.response.send_message("이 버튼은 서버 오너만 사용할 수 있습니다.", ephemeral=True)
-            return
-        if not interaction.channel.name.startswith("ticket-"):
-            await interaction.response.send_message("이 버튼은 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
-            return
-        new_name = f"[처리중] {interaction.channel.name}"
-        await interaction.channel.edit(name=new_name)
-        await interaction.response.send_message("상태가 **처리중**으로 변경되었습니다.", ephemeral=True)
-
-class StatusDoneButton(Button):
-    def __init__(self):
-        super().__init__(label="완료", style=discord.ButtonStyle.success, custom_id="status_done")
-
-    async def callback(self, interaction: discord.Interaction):
-        if not is_owner(interaction):
-            await interaction.response.send_message("이 버튼은 서버 오너만 사용할 수 있습니다.", ephemeral=True)
-            return
-        if not (interaction.channel.name.startswith("ticket-") or interaction.channel.name.startswith("[처리중] ticket-")):
-            await interaction.response.send_message("이 버튼은 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
-            return
-        new_name = f"[완료] {interaction.channel.name}"
-        await interaction.channel.edit(name=new_name)
-        await interaction.response.send_message("상태가 **완료**로 변경되었습니다.", ephemeral=True)
+        # 채널 삭제
+        try:
+            await channel.delete(reason="티켓 닫기")
+        except discord.Forbidden:
+            await interaction.followup.send("권한이 부족하여 채널을 삭제하지 못했습니다. 봇 권한을 확인하세요.", ephemeral=True)
+        except Exception:
+            traceback.print_exc()
 
 class CallOwnerButton(Button):
     def __init__(self):
@@ -134,8 +111,6 @@ class CallOwnerButton(Button):
 class CloseTicketView(View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(StatusInProgressButton())
-        self.add_item(StatusDoneButton())
         self.add_item(CallOwnerButton())
         self.add_item(CloseTicketButton())
 
@@ -147,10 +122,10 @@ class ShopSelect(Select):
         super().__init__(placeholder="원하는 항목을 선택하세요", options=options, custom_id="shop_select_v2")
 
     async def callback(self, interaction: discord.Interaction):
+        # 유저가 참여 중인 열린 티켓 있는지 확인
         existing = [
             ch for ch in interaction.guild.text_channels
-            if (ch.name.startswith("ticket-") or ch.name.startswith("[처리중] ticket-") or ch.name.startswith("[완료] ticket-"))
-            and interaction.user in ch.members
+            if ch.name.startswith("ticket-") and interaction.user in ch.members
         ]
         if existing:
             await interaction.response.send_message(f"이미 열린 티켓이 있습니다: {existing[0].mention}", ephemeral=True)
@@ -161,6 +136,7 @@ class ShopSelect(Select):
         if not category:
             category = await guild.create_category(TICKET_CATEGORY_NAME)
 
+        # 유저 표시 이름(한글 가능)으로 채널명 생성
         channel_name = f"ticket-{interaction.user.display_name}-구매하기"
 
         overwrites = {
@@ -185,10 +161,14 @@ class ShopSelect(Select):
 
         await interaction.response.send_message(f"티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
-        # 선택창 초기화
-        self.view.clear_items()
-        self.view.add_item(ShopSelect())
-        await interaction.message.edit(view=self.view)
+        # 선택창 초기화(컴포넌트 에러 방지)
+        try:
+            self.view.clear_items()
+            self.view.add_item(ShopSelect())
+            await interaction.message.edit(view=self.view)
+        except Exception:
+            # 원본 메시지를 편집할 권한/상황이 안 되면 무시
+            pass
 
 class ShopView(View):
     def __init__(self):
@@ -225,11 +205,7 @@ async def shop_cmd(interaction: discord.Interaction):
 async def list_cmd(interaction: discord.Interaction):
     tickets = [
         ch.mention for ch in interaction.guild.text_channels
-        if interaction.user in ch.members and (
-            ch.name.startswith("ticket-") or
-            ch.name.startswith("[처리중] ticket-") or
-            ch.name.startswith("[완료] ticket-")
-        )
+        if interaction.user in ch.members and ch.name.startswith("ticket-")
     ]
     if not tickets:
         await interaction.response.send_message("현재 참여 중인 티켓이 없습니다.", ephemeral=True)
