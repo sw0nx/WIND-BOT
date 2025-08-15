@@ -4,11 +4,10 @@ import io
 import discord
 import asyncio
 import traceback
-import datetime
 import pytz
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import View, Select, Button
+from discord.ui import View, Select, Button, Modal, TextInput
 from flask import Flask
 import threading
 
@@ -36,12 +35,13 @@ class MyBot(commands.Bot):
         self.add_view(ShopView())
         self.add_view(CloseTicketView())
         self.tree.add_command(shop_cmd)
-        print("Persistent views registered.")
+        self.tree.add_command(reopen_cmd)
+        self.tree.add_command(list_cmd)
 
 bot = MyBot()
 kst = pytz.timezone('Asia/Seoul')
 
-# ---- keepalive (Flask) ----
+# ---- Flask Keepalive ----
 app = Flask(__name__)
 @app.route('/')
 def home():
@@ -67,97 +67,51 @@ async def save_channel_logs_and_send(channel: discord.TextChannel, log_channel: 
             author = f"{m.author} ({m.author.id})"
             content = m.content or ""
             att_urls = " ".join(att.url for att in m.attachments) if m.attachments else ""
-            line = f"[{timestamp}] {author}: {content} {att_urls}"
-            msgs.append(line)
+            msgs.append(f"[{timestamp}] {author}: {content} {att_urls}")
         txt = "\n".join(msgs) if msgs else "채팅 기록이 비어 있습니다."
         bio = io.BytesIO(txt.encode("utf-8"))
         bio.seek(0)
-        fname = f"ticket-log-{channel.name}.txt"
-        await log_channel.send(content=f"티켓 로그: {channel.name}", file=discord.File(fp=bio, filename=fname))
+        await log_channel.send(file=discord.File(fp=bio, filename=f"ticket-log-{channel.name}.txt"))
     except Exception:
         traceback.print_exc()
 
-# ---------- UI 컴포넌트 ----------
-class CloseTicketButton(Button):
-    def __init__(self):
-        super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="wind_close_ticket_v1")
+async def lock_ticket_channel(channel: discord.TextChannel):
+    try:
+        overwrites = channel.overwrites
+        for target in overwrites:
+            if isinstance(target, discord.Member):
+                overwrites[target].send_messages = False
+        await channel.edit(overwrites=overwrites)
+    except:
+        traceback.print_exc()
 
-    async def callback(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.send_message("티켓을 닫는 중입니다...", ephemeral=True)
-        except discord.InteractionResponded:
-            pass
+# ---------- UI ----------
+class ReasonModal(Modal, title="티켓 사유 입력"):
+    def __init__(self, selected_item: str, interaction_user: discord.Member):
+        super().__init__()
+        self.selected_item = selected_item
+        self.user = interaction_user
 
-        channel = interaction.channel
-        if not channel or not channel.name.startswith("ticket-"):
-            await interaction.followup.send("이 버튼은 티켓 채널에서만 사용할 수 있습니다.", ephemeral=True)
-            return
-
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        try:
-            if log_channel:
-                await log_channel.send(embed=discord.Embed(
-                    title="티켓 닫힘 (예정)",
-                    description=f"채널 `{channel.name}`이 로그 저장 후 닫힙니다.",
-                    color=0x000000
-                ))
-                await save_channel_logs_and_send(channel, log_channel)
-        except Exception:
-            traceback.print_exc()
-
-        try:
-            await channel.delete()
-        except Exception as e:
-            traceback.print_exc()
-            if log_channel:
-                await log_channel.send(embed=discord.Embed(
-                    title="티켓 채널 삭제 실패",
-                    description=f"채널 `{channel.name}` 삭제 중 오류:\n```\n{e}\n```",
-                    color=discord.Color.red()
-                ))
-
-class CloseTicketView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(CloseTicketButton())
-
-class ShopSelect(Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(
-                label="구매하기",
-                description="로블록스 아이템 또는 로벅스 구매",
-                emoji="🛒"
-            )
-        ]
-        super().__init__(
-            placeholder="원하는 항목을 선택하세요",
-            options=options,
-            custom_id="wind_shop_select_v1"
+        self.reason = TextInput(
+            label="사유",
+            placeholder="티켓을 여는 이유를 입력하세요.",
+            style=discord.TextStyle.paragraph,
+            required=True
         )
+        self.add_item(self.reason)
 
-    async def callback(self, interaction: discord.Interaction):
-        selected_item = self.values[0]
-        await interaction.response.defer()
+    async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
-        if not guild:
-            return
+        category = guild.get_channel(CATEGORY_ID) or discord.utils.get(guild.categories, name=TICKET_CATEGORY_NAME)
+        if not category:
+            category = await guild.create_category(TICKET_CATEGORY_NAME)
 
-        category = guild.get_channel(CATEGORY_ID) if CATEGORY_ID else None
-        if not isinstance(category, discord.CategoryChannel):
-            category = discord.utils.get(guild.categories, name=TICKET_CATEGORY_NAME)
-            if not category:
-                try:
-                    category = await guild.create_category(TICKET_CATEGORY_NAME)
-                except:
-                    category = None
-
-        base = f"ticket-{selected_item}-{interaction.user.name}-{interaction.user.id}"
+        base = f"ticket-{self.selected_item}-{self.user.name}-{self.user.id}"
         channel_name = sanitize_channel_name(base)
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            self.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         admin_role = guild.get_role(ADMIN_ROLE_ID)
@@ -170,78 +124,103 @@ class ShopSelect(Select):
         ticket_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
 
         guide_embed = discord.Embed(
-            title=f"{selected_item} 티켓 생성됨",
-            description="담당자가 곧 응답합니다.\n아래 버튼으로 티켓을 닫을 수 있습니다.",
+            title=f"{self.selected_item} 티켓 생성됨",
+            description=f"**사유:** {self.reason.value}\n\n담당자가 곧 응답합니다.",
             color=0x000000
-        ).set_footer(text="WIND Ticket Bot")
+        )
         await ticket_channel.send(embed=guide_embed, view=CloseTicketView())
 
-        mentions = []
-        if admin_role:
-            mentions.append(admin_role.mention)
-        if owner_role:
-            mentions.append(owner_role.mention)
-        mentions.append(interaction.user.mention)
+        await interaction.response.send_message(f"✅ 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
-        await ticket_channel.send(
-            f"{' '.join(mentions)} 티켓이 생성되었습니다.",
-            allowed_mentions=discord.AllowedMentions(roles=True, users=True)
-        )
+class CloseTicketButton(Button):
+    def __init__(self):
+        super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, custom_id="wind_close_ticket_v2")
 
-        await interaction.followup.send(f"✅ `{selected_item}` 티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
-        await interaction.message.edit(view=ShopView())
+    async def callback(self, interaction: discord.Interaction):
+        channel = interaction.channel
+        if not channel.name.startswith("ticket-"):
+            await interaction.response.send_message("이 버튼은 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
+            return
 
+        await interaction.response.send_message("티켓을 닫는 중입니다...", ephemeral=True)
+
+        # 로그 저장
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
-            await log_channel.send(embed=discord.Embed(
-                title="📥 티켓 생성",
-                description=f"채널: {ticket_channel.mention}\n생성자: {interaction.user.mention} ({interaction.user.id})\n항목: `{selected_item}`",
-                color=0x000000
-            ))
+            await save_channel_logs_and_send(channel, log_channel)
+
+        # 채널 잠금 + 이름 변경
+        await lock_ticket_channel(channel)
+        await channel.edit(name=f"closed-{channel.name}")
+
+class CloseTicketView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(CloseTicketButton())
+
+class ShopSelect(Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="🛒 구매하기", description="로블록스 아이템 또는 로벅스 구매")
+        ]
+        super().__init__(placeholder="원하는 항목을 선택하세요", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        existing = [
+            ch for ch in interaction.guild.text_channels
+            if (ch.name.startswith("ticket-") or ch.name.startswith("closed-ticket-")) and interaction.user in ch.members
+        ]
+        if existing:
+            await interaction.response.send_message(f"⚠ 이미 열린 티켓이 있습니다: {existing[0].mention}", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(ReasonModal(self.values[0], interaction.user))
 
 class ShopView(View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(ShopSelect())
 
-# ---- 티켓 명령어 ----
-@app_commands.command(name="티켓", description="티켓 임베드를 표시합니다. (관리자/오너 전용)")
+# ---------- Commands ----------
+@app_commands.command(name="티켓", description="티켓 메뉴를 표시합니다.")
 async def shop_cmd(interaction: discord.Interaction):
-    # 3초 제한 방지
-    await interaction.response.defer(ephemeral=False)
-
-    if not isinstance(interaction.user, discord.Member):
-        await interaction.followup.send("서버 안에서만 실행 가능합니다.", ephemeral=True)
-        return
-
-    if (
-        interaction.user.id != interaction.guild.owner_id and
-        not any(role.id in (ADMIN_ROLE_ID, OWNER_ROLE_ID) for role in interaction.user.roles)
-    ):
-        await interaction.followup.send("관리자 또는 오너만 사용할 수 있습니다.", ephemeral=True)
-        return
-
     embed = discord.Embed(
         description=(
-            "**• <#1398260667768635392> 필독 부탁드립니다<a:emoji_5:1404764522300047431>\n"
-            "• <#1398261912852103208> 재고 확인하고 티켓 열기<a:emoji_5:1404764522300047431>\n"
-            "• 장난문의는 제재 당할 수도 있습니다<a:emoji_5:1404764522300047431>\n"
-            "• 티켓 열고 잠수 탈 시 하루 탐아 당할 수 있습니다<a:emoji_5:1404764522300047431>**\n"
+            "**• <#1398260667768635392> 필독 부탁드립니다\n"
+            "• <#1398261912852103208> 재고 확인하고 티켓 열기\n"
+            "• 장난문의는 제재 당할 수도 있습니다\n"
+            "• 티켓 열고 잠수 탈 시 하루 탐아 당할 수 있습니다**\n\n"
+            "원하는 항목을 선택해 티켓을 생성하세요."
         ),
         color=0x000000
     )
+    await interaction.response.send_message(embed=embed, view=ShopView())
 
-    await interaction.followup.send(embed=embed, view=ShopView())
+@app_commands.command(name="티켓재오픈", description="닫힌 티켓을 다시 엽니다.")
+async def reopen_cmd(interaction: discord.Interaction):
+    channel = interaction.channel
+    if not channel.name.startswith("closed-ticket-"):
+        await interaction.response.send_message("이 명령어는 닫힌 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
+        return
+    await channel.edit(name=channel.name.replace("closed-", ""), overwrites={
+        interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+    })
+    await interaction.response.send_message("✅ 티켓이 다시 열렸습니다.", ephemeral=True)
 
-# ---- 봇 실행 이벤트 ----
+@app_commands.command(name="티켓목록", description="현재 티켓 목록을 확인합니다.")
+async def list_cmd(interaction: discord.Interaction):
+    tickets = [ch.mention for ch in interaction.guild.text_channels if interaction.user in ch.members and (ch.name.startswith("ticket-") or ch.name.startswith("closed-ticket-"))]
+    if not tickets:
+        await interaction.response.send_message("현재 참여 중인 티켓이 없습니다.", ephemeral=True)
+    else:
+        await interaction.response.send_message("📋 참여 중인 티켓:\n" + "\n".join(tickets), ephemeral=True)
+
+# ---------- Ready ----------
 @bot.event
 async def on_ready():
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ 슬래시 명령어 동기화 완료: {len(synced)}개")
-    except Exception as e:
-        print(f"명령어 동기화 실패: {e}")
-    print(f"✅ 로그인됨: {bot.user} (ID: {bot.user.id})")
+    await bot.tree.sync()
+    print(f"✅ 로그인됨: {bot.user}")
 
 keep_alive()
 bot.run(TOKEN)
