@@ -1,75 +1,63 @@
-import os
 import discord
-from discord.ext import commands
 from discord import app_commands
-from flask import Flask
-import threading
+from discord.ext import commands
 
-TOKEN = os.getenv("BOT_TOKEN")  # 환경변수 BOT_TOKEN 설정 필수
+TOKEN = "봇 토큰 입력"
+GUILD_ID = 1398256208887939214  # 서버 ID
+CATEGORY_ID = 1398263224062836829  # 티켓 카테고리 ID
+ADMIN_ROLE_ID = 1398271188291289138  # 관리자 역할 ID
 
-# ===== Discord Bot 설정 =====
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ===== 티켓 드롭다운 =====
-class TicketDropdown(discord.ui.Select):
+class TicketSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="티켓 생성", value="create_ticket")
+            discord.SelectOption(label="문의"),
+            discord.SelectOption(label="신고"),
+            discord.SelectOption(label="기타"),
         ]
-        super().__init__(placeholder="티켓 항목 선택", options=options)
+        super().__init__(placeholder="티켓 항목 선택", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         guild = interaction.guild
+        category = discord.utils.get(guild.categories, id=CATEGORY_ID)
+        admin_role = guild.get_role(ADMIN_ROLE_ID)
+
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            interaction.user: discord.PermissionOverwrite(read_messages=True)
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            admin_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)
         }
+
         channel = await guild.create_text_channel(
-            name=f"ticket-{interaction.user.name}",
+            name=f"{self.values[0]}-{interaction.user.name}",
+            category=category,
             overwrites=overwrites
         )
-        await interaction.response.send_message(f"✅ 티켓이 생성되었습니다: {channel.mention}", ephemeral=True)
 
-# ===== View =====
+        await interaction.response.send_message(f"티켓이 생성되었습니다: {channel.mention}", ephemeral=True)
+        await channel.send(f"{interaction.user.mention} 님이 티켓을 생성했습니다.")
+
 class TicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(TicketDropdown())
+        self.add_item(TicketSelect())
 
-# ===== 슬래시 명령어 =====
-@bot.tree.command(name="티켓", description="티켓 메뉴를 엽니다.")
-async def ticket(interaction: discord.Interaction):
+@bot.tree.command(name="티켓", description="티켓 생성 메뉴를 표시합니다.")
+async def ticket_command(interaction: discord.Interaction):
     embed = discord.Embed(
-        description="아래 드롭다운중 하나를 선택해 티켓을 열어주세요.\n\n티켓에서 맨션시 티켓닫습니다",
-        color=0x2b2d31
+        description="아래 드롭다운중 하나를 선택해 티켓을 열어주세요.\n\n티켓에서 맨션시 티켓답니다",
+        color=0x2B2D31
     )
     await interaction.response.send_message(embed=embed, view=TicketView())
 
-# ===== 봇 준비 이벤트 =====
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
-    print(f"✅ 로그인 완료: {bot.user}")
+    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+    print(f"✅ 로그인됨: {bot.user}")
 
-# ===== Flask Keep-Alive =====
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run():
-    app.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = threading.Thread(target=run)
-    t.start()
-
-# ===== 실행 =====
-if __name__ == "__main__":
-    keep_alive()
-    bot.run(TOKEN)
+bot.run(TOKEN)
