@@ -33,7 +33,6 @@ class MyBot(commands.Bot):
         self.add_view(ShopView())
         self.add_view(CloseTicketView())
         self.tree.add_command(shop_cmd)
-        self.tree.add_command(reopen_cmd)
         self.tree.add_command(list_cmd)
 
 bot = MyBot()
@@ -101,7 +100,7 @@ class ShopSelect(Select):
     async def callback(self, interaction: discord.Interaction):
         existing = [
             ch for ch in interaction.guild.text_channels
-            if (ch.name.startswith("ticket-") or ch.name.startswith("closed-ticket-")) and interaction.user in ch.members
+            if (ch.name.startswith("ticket-")) and interaction.user in ch.members
         ]
         if existing:
             await interaction.response.send_message(f"이미 열린 티켓이 있습니다: {existing[0].mention}", ephemeral=True)
@@ -112,6 +111,7 @@ class ShopSelect(Select):
         if not category:
             category = await guild.create_category(TICKET_CATEGORY_NAME)
 
+        # 유저 이름 그대로 표시
         channel_name = f"ticket-{interaction.user.display_name}-구매하기"
 
         overwrites = {
@@ -128,18 +128,22 @@ class ShopSelect(Select):
 
         ticket_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
 
-        # 간단 안내 임베드
+        # 안내 임베드
         guide_embed = discord.Embed(
-            description="구매 원하는 아이템을 미리 적어주세요.\n그래야 빠른 처리가 가능합니다.",
+            description=(
+                "구매 원하는 아이템을 미리 적어주세요.\n"
+                "그래야 빠른 처리가 가능합니다."
+            ),
             color=0x000000
         )
         await ticket_channel.send(embed=guide_embed, view=CloseTicketView())
 
         await interaction.response.send_message(f"티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
 
-        # 선택 후 초기화
+        # 선택 UI 초기화
         self.view.clear_items()
         self.view.add_item(ShopSelect())
+        await interaction.message.edit(view=self.view)
 
 class ShopView(View):
     def __init__(self):
@@ -171,23 +175,10 @@ async def shop_cmd(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, view=ShopView())
 
-@app_commands.command(name="티켓재오픈")
-@owner_only()
-async def reopen_cmd(interaction: discord.Interaction):
-    channel = interaction.channel
-    if not channel.name.startswith("closed-ticket-"):
-        await interaction.response.send_message("이 명령어는 닫힌 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
-        return
-    await channel.edit(name=channel.name.replace("closed-", ""), overwrites={
-        interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-        interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-    })
-    await interaction.response.send_message("티켓이 다시 열렸습니다.", ephemeral=True)
-
 @app_commands.command(name="티켓목록")
 @owner_only()
 async def list_cmd(interaction: discord.Interaction):
-    tickets = [ch.mention for ch in interaction.guild.text_channels if interaction.user in ch.members and (ch.name.startswith("ticket-") or ch.name.startswith("closed-ticket-"))]
+    tickets = [ch.mention for ch in interaction.guild.text_channels if interaction.user in ch.members and ch.name.startswith("ticket-")]
     if not tickets:
         await interaction.response.send_message("현재 참여 중인 티켓이 없습니다.", ephemeral=True)
     else:
