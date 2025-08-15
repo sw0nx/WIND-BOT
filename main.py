@@ -98,7 +98,7 @@ async def create_ticket(interaction: discord.Interaction, selected_item: str):
     # 안내 메시지
     guide_embed = discord.Embed(
         title=f"{selected_item} 티켓 생성됨",
-        description="담당자가 곧 응답합니다.\n아래 버튼으로 티켓을 닫을 수 있습니다.",
+        description="담당자가 곧 응답합니다\n아래 버튼으로 티켓을 닫을 수 있습니다",
         color=0x000000
     ).set_footer(text="WIND Ticket Bot")
 
