@@ -1,26 +1,34 @@
+import os
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-TOKEN = "봇 토큰 입력"
+# 환경변수에서 토큰 불러오기
+TOKEN = os.getenv("BOT_TOKEN")  
 GUILD_ID = 1398256208887939214  # 서버 ID
 CATEGORY_ID = 1398263224062836829  # 티켓 카테고리 ID
-ADMIN_ROLE_ID = 1398271188291289138  # 관리자 역할 ID
+ADMIN_ROLE_ID = 1398268476933542018  # 관리자 역할 ID
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
+intents.message_content = True  # 디버그용
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="문의"),
-            discord.SelectOption(label="신고"),
-            discord.SelectOption(label="기타"),
+            discord.SelectOption(label="문의", description="문의 티켓을 엽니다."),
+            discord.SelectOption(label="신고", description="신고 티켓을 엽니다."),
+            discord.SelectOption(label="기타", description="기타 티켓을 엽니다."),
         ]
-        super().__init__(placeholder="티켓 항목 선택", min_values=1, max_values=1, options=options)
+        super().__init__(
+            placeholder="티켓 항목 선택",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
 
     async def callback(self, interaction: discord.Interaction):
         guild = interaction.guild
@@ -39,8 +47,8 @@ class TicketSelect(discord.ui.Select):
             overwrites=overwrites
         )
 
-        await interaction.response.send_message(f"티켓이 생성되었습니다: {channel.mention}", ephemeral=True)
-        await channel.send(f"{interaction.user.mention} 님이 티켓을 생성했습니다.")
+        await interaction.response.send_message(f"✅ 티켓이 생성되었습니다: {channel.mention}", ephemeral=True)
+        await channel.send(f"{interaction.user.mention} 님이 **{self.values[0]}** 티켓을 생성했습니다.")
 
 class TicketView(discord.ui.View):
     def __init__(self):
@@ -60,4 +68,7 @@ async def on_ready():
     await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
     print(f"✅ 로그인됨: {bot.user}")
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    if not TOKEN:
+        raise ValueError("❌ BOT_TOKEN 환경변수가 설정되지 않았습니다.")
+    bot.run(TOKEN)
