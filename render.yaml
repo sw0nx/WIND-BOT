@@ -1,9 +1,1 @@
-services:
-  - type: web
-    name: wind-bot
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
-    envVars:
-      - key: BOT_TOKEN
-        sync: false
+worker: python main.py
