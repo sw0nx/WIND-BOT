@@ -157,7 +157,7 @@ async def on_interaction(interaction: discord.Interaction):
                 traceback.print_exc()
 
 # ---------- /티켓 명령어 ----------
-@app_commands.command(name="티켓", description="티켓 안내 메시지를 보냅니다.")
+@app_commands.command(name="티켓", description="티켓 안내 메시지를 보냅니다")
 async def ticket_cmd(interaction: discord.Interaction):
     components_v2 = [
         {
