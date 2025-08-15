@@ -194,7 +194,7 @@ class ShopSelect(Select):
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             await log_channel.send(embed=discord.Embed(
-                title="📥 티켓 생성",
+                title="티켓 생성",
                 description=f"채널: {ticket_channel.mention}\n생성자: {interaction.user.mention} ({interaction.user.id})\n항목: `{selected_item}`",
                 color=0x000000
             ))
@@ -229,8 +229,6 @@ async def shop_cmd(interaction: discord.Interaction):
         ),
         color=0x000000
     )
-    embed.set_image(url="https://cdn.discordapp.com/attachments/1398301252776886395/1404745170788028426/45435345.gif")
-    await interaction.response.send_message(embed=embed, view=ShopView())
 
 # ---- 봇 실행 이벤트 ----
 @bot.event
