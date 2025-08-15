@@ -17,8 +17,8 @@ TOKEN = os.getenv("BOT_TOKEN")
 CATEGORY_ID = 1398263224062836829
 TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"
 LOG_CHANNEL_ID = 1398267597299912744
-ADMIN_ROLE_ID = 1398271188291289138  # 실제 관리자 역할 ID로 변경
-OWNER_ROLE_ID = 1398268476933542018  # 실제 오너 역할 ID로 변경
+ADMIN_ROLE_ID = 1398271188291289138
+OWNER_ROLE_ID = 1398268476933542018
 MAX_LOG_MESSAGES = 1000
 # ==============
 
@@ -35,7 +35,7 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(ShopView())
         self.add_view(CloseTicketView())
-        self.tree.add_command(shop_cmd)  # 슬래시 명령어 등록
+        self.tree.add_command(shop_cmd)
         print("Persistent views registered.")
 
 bot = MyBot()
@@ -211,7 +211,6 @@ async def shop_cmd(interaction: discord.Interaction):
         await interaction.response.send_message("서버 안에서만 실행 가능합니다.", ephemeral=True)
         return
 
-    # 소유자거나 관리자/오너 역할이 있으면 허용
     if (
         interaction.user.id != interaction.guild.owner_id and
         not any(role.id in (ADMIN_ROLE_ID, OWNER_ROLE_ID) for role in interaction.user.roles)
@@ -229,6 +228,7 @@ async def shop_cmd(interaction: discord.Interaction):
         ),
         color=0x000000
     )
+    await interaction.response.send_message(embed=embed, view=ShopView())
 
 # ---- 봇 실행 이벤트 ----
 @bot.event
