@@ -125,7 +125,13 @@ class ReasonModal(Modal, title="티켓 사유 입력"):
 
         guide_embed = discord.Embed(
             title=f"{self.selected_item} 티켓 생성됨",
-            description=f"**사유:** {self.reason.value}\n\n담당자가 곧 응답합니다.",
+            description=(
+                f"**사유:** {self.reason.value}\n\n"
+                "📌 /티켓 → 선택 후 사유 모달 입력\n"
+                "📌 닫기 시 채널 삭제 ❌ → 잠금 + 이름 변경\n"
+                "📌 /티켓재오픈으로 다시 열기 가능\n"
+                "📌 /티켓목록으로 현재 티켓 확인 가능"
+            ),
             color=0x000000
         )
         await ticket_channel.send(embed=guide_embed, view=CloseTicketView())
@@ -161,9 +167,9 @@ class CloseTicketView(View):
 class ShopSelect(Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="🛒 구매하기", description="로블록스 아이템 또는 로벅스 구매")
+            discord.SelectOption(label="구매하기", description="로블록스 아이템 또는 로벅스 구매")
         ]
-        super().__init__(placeholder="원하는 항목을 선택하세요", options=options)
+        super().__init__(placeholder="원하는 항목을 선택하세요", options=options, custom_id="shop_select_v2")
 
     async def callback(self, interaction: discord.Interaction):
         existing = [
@@ -182,7 +188,17 @@ class ShopView(View):
         self.add_item(ShopSelect())
 
 # ---------- Commands ----------
+def owner_only():
+    async def predicate(interaction: discord.Interaction):
+        role = interaction.guild.get_role(OWNER_ROLE_ID)
+        if role and role in interaction.user.roles:
+            return True
+        await interaction.response.send_message("❌ 이 명령어는 서버 오너만 사용할 수 있습니다.", ephemeral=True)
+        return False
+    return app_commands.check(predicate)
+
 @app_commands.command(name="티켓", description="티켓 메뉴를 표시합니다.")
+@owner_only()
 async def shop_cmd(interaction: discord.Interaction):
     embed = discord.Embed(
         description=(
@@ -197,6 +213,7 @@ async def shop_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=ShopView())
 
 @app_commands.command(name="티켓재오픈", description="닫힌 티켓을 다시 엽니다.")
+@owner_only()
 async def reopen_cmd(interaction: discord.Interaction):
     channel = interaction.channel
     if not channel.name.startswith("closed-ticket-"):
@@ -209,6 +226,7 @@ async def reopen_cmd(interaction: discord.Interaction):
     await interaction.response.send_message("✅ 티켓이 다시 열렸습니다.", ephemeral=True)
 
 @app_commands.command(name="티켓목록", description="현재 티켓 목록을 확인합니다.")
+@owner_only()
 async def list_cmd(interaction: discord.Interaction):
     tickets = [ch.mention for ch in interaction.guild.text_channels if interaction.user in ch.members and (ch.name.startswith("ticket-") or ch.name.startswith("closed-ticket-"))]
     if not tickets:
