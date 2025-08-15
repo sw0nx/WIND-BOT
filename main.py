@@ -66,6 +66,10 @@ async def save_channel_logs_and_send(channel: discord.TextChannel, log_channel: 
     except Exception:
         traceback.print_exc()
 
+def is_owner(interaction: discord.Interaction) -> bool:
+    owner_role = interaction.guild.get_role(OWNER_ROLE_ID)
+    return owner_role and owner_role in interaction.user.roles
+
 # ---------- UI ----------
 class CloseTicketButton(Button):
     def __init__(self):
@@ -90,6 +94,9 @@ class StatusInProgressButton(Button):
         super().__init__(label="처리중", style=discord.ButtonStyle.primary, custom_id="status_inprogress")
 
     async def callback(self, interaction: discord.Interaction):
+        if not is_owner(interaction):
+            await interaction.response.send_message("이 버튼은 오너만 클릭할 수 있습니다.", ephemeral=True)
+            return
         if not interaction.channel.name.startswith("ticket-"):
             await interaction.response.send_message("이 버튼은 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
             return
@@ -102,6 +109,9 @@ class StatusDoneButton(Button):
         super().__init__(label="완료", style=discord.ButtonStyle.success, custom_id="status_done")
 
     async def callback(self, interaction: discord.Interaction):
+        if not is_owner(interaction):
+            await interaction.response.send_message("이 버튼은 오너만 클릭할 수 있습니다.", ephemeral=True)
+            return
         if not (interaction.channel.name.startswith("ticket-") or interaction.channel.name.startswith("[처리중] ticket-")):
             await interaction.response.send_message("이 버튼은 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
             return
@@ -109,24 +119,24 @@ class StatusDoneButton(Button):
         await interaction.channel.edit(name=new_name)
         await interaction.response.send_message("상태가 **완료**로 변경되었습니다.", ephemeral=True)
 
-class CallAdminButton(Button):
+class CallOwnerButton(Button):
     def __init__(self):
-        super().__init__(label="관리자 호출", style=discord.ButtonStyle.secondary, custom_id="call_admin")
+        super().__init__(label="오너 호출", style=discord.ButtonStyle.secondary, custom_id="call_owner")
 
     async def callback(self, interaction: discord.Interaction):
-        admin_role = interaction.guild.get_role(ADMIN_ROLE_ID)
-        if not admin_role:
-            await interaction.response.send_message("관리자 역할을 찾을 수 없습니다.", ephemeral=True)
+        owner_role = interaction.guild.get_role(OWNER_ROLE_ID)
+        if not owner_role:
+            await interaction.response.send_message("오너 역할을 찾을 수 없습니다.", ephemeral=True)
             return
-        await interaction.channel.send(f"{admin_role.mention} 호출되었습니다!")
-        await interaction.response.send_message("관리자를 호출했습니다.", ephemeral=True)
+        await interaction.channel.send(f"{owner_role.mention} 호출되었습니다!")
+        await interaction.response.send_message("오너를 호출했습니다.", ephemeral=True)
 
 class CloseTicketView(View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(StatusInProgressButton())
         self.add_item(StatusDoneButton())
-        self.add_item(CallAdminButton())
+        self.add_item(CallOwnerButton())
         self.add_item(CloseTicketButton())
 
 class ShopSelect(Select):
@@ -188,8 +198,7 @@ class ShopView(View):
 # ---------- Commands ----------
 def owner_only():
     async def predicate(interaction: discord.Interaction):
-        role = interaction.guild.get_role(OWNER_ROLE_ID)
-        if role and role in interaction.user.roles:
+        if is_owner(interaction):
             return True
         await interaction.response.send_message("이 명령어는 서버 오너만 사용할 수 있습니다.", ephemeral=True)
         return False
