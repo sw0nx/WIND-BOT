@@ -66,9 +66,9 @@ async def save_channel_logs_and_send(channel: discord.TextChannel, log_channel: 
     except Exception:
         traceback.print_exc()
 
-def is_owner(interaction: discord.Interaction) -> bool:
-    owner_role = interaction.guild.get_role(OWNER_ROLE_ID)
-    return owner_role and owner_role in interaction.user.roles
+def is_owner(interaction: discord.Interaction):
+    role = interaction.guild.get_role(OWNER_ROLE_ID)
+    return role and role in interaction.user.roles
 
 # ---------- UI ----------
 class CloseTicketButton(Button):
@@ -95,7 +95,7 @@ class StatusInProgressButton(Button):
 
     async def callback(self, interaction: discord.Interaction):
         if not is_owner(interaction):
-            await interaction.response.send_message("이 버튼은 오너만 클릭할 수 있습니다.", ephemeral=True)
+            await interaction.response.send_message("이 버튼은 서버 오너만 사용할 수 있습니다.", ephemeral=True)
             return
         if not interaction.channel.name.startswith("ticket-"):
             await interaction.response.send_message("이 버튼은 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
@@ -110,7 +110,7 @@ class StatusDoneButton(Button):
 
     async def callback(self, interaction: discord.Interaction):
         if not is_owner(interaction):
-            await interaction.response.send_message("이 버튼은 오너만 클릭할 수 있습니다.", ephemeral=True)
+            await interaction.response.send_message("이 버튼은 서버 오너만 사용할 수 있습니다.", ephemeral=True)
             return
         if not (interaction.channel.name.startswith("ticket-") or interaction.channel.name.startswith("[처리중] ticket-")):
             await interaction.response.send_message("이 버튼은 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
@@ -198,7 +198,8 @@ class ShopView(View):
 # ---------- Commands ----------
 def owner_only():
     async def predicate(interaction: discord.Interaction):
-        if is_owner(interaction):
+        role = interaction.guild.get_role(OWNER_ROLE_ID)
+        if role and role in interaction.user.roles:
             return True
         await interaction.response.send_message("이 명령어는 서버 오너만 사용할 수 있습니다.", ephemeral=True)
         return False
