@@ -17,8 +17,8 @@ TOKEN = os.getenv("BOT_TOKEN")
 CATEGORY_ID = 1398263224062836829
 TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"
 LOG_CHANNEL_ID = 1398267597299912744
-ADMIN_ROLE_ID = 123456789012345678
-OWNER_ROLE_ID = 987654321098765432
+ADMIN_ROLE_ID = 1398271188291289138
+OWNER_ROLE_ID = 1398268476933542018
 MAX_LOG_MESSAGES = 1000
 # ==============
 
@@ -73,7 +73,7 @@ async def save_channel_logs_and_send(channel: discord.TextChannel, log_channel: 
         bio = io.BytesIO(txt.encode("utf-8"))
         bio.seek(0)
         fname = f"ticket-log-{channel.name}.txt"
-        await log_channel.send(content=f"🗂 티켓 로그: {channel.name}", file=discord.File(fp=bio, filename=fname))
+        await log_channel.send(content=f"티켓 로그: {channel.name}", file=discord.File(fp=bio, filename=fname))
     except Exception:
         traceback.print_exc()
 
@@ -194,7 +194,7 @@ class ShopSelect(Select):
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             await log_channel.send(embed=discord.Embed(
-                title="📥 티켓 생성",
+                title="티켓 생성",
                 description=f"채널: {ticket_channel.mention}\n생성자: {interaction.user.mention} ({interaction.user.id})\n항목: `{selected_item}`",
                 color=0x000000
             ))
@@ -204,10 +204,10 @@ class ShopView(View):
         super().__init__(timeout=None)
         self.add_item(ShopSelect())
 
-@app_commands.command(name="상점", description="상점 메뉴를 표시합니다. (관리자/오너 전용)")
+@app_commands.command(name="티켓", description="티켓 임베드를 표시합니다. (관리자/오너 전용)")
 async def shop_cmd(interaction: discord.Interaction):
     if not any(role.id in (ADMIN_ROLE_ID, OWNER_ROLE_ID) for role in interaction.user.roles):
-        await interaction.response.send_message("⛔ 이 명령어는 관리자 또는 오너만 사용할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message("관리자 또는 오너만 사용할 수 있습니다", ephemeral=True)
         return
 
     embed = discord.Embed(
