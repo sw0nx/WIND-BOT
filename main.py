@@ -6,6 +6,7 @@ import asyncio
 import traceback
 import datetime
 import pytz
+from discord import app_commands
 from discord.ext import commands
 from discord.ui import View, Select, Button
 from flask import Flask
@@ -34,6 +35,7 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(ShopView())
         self.add_view(CloseTicketView())
+        self.tree.add_command(shop_cmd)
         print("Persistent views registered.")
 
 bot = MyBot()
@@ -202,8 +204,12 @@ class ShopView(View):
         super().__init__(timeout=None)
         self.add_item(ShopSelect())
 
-@bot.command(name="상점")
-async def shop_cmd(ctx: commands.Context):
+@app_commands.command(name="상점", description="상점 메뉴를 표시합니다. (관리자/오너 전용)")
+async def shop_cmd(interaction: discord.Interaction):
+    if not any(role.id in (ADMIN_ROLE_ID, OWNER_ROLE_ID) for role in interaction.user.roles):
+        await interaction.response.send_message("⛔ 이 명령어는 관리자 또는 오너만 사용할 수 있습니다.", ephemeral=True)
+        return
+
     embed = discord.Embed(
         title="",
         description=(
@@ -218,10 +224,15 @@ async def shop_cmd(ctx: commands.Context):
     embed.set_image(
         url="https://cdn.discordapp.com/attachments/1398301252776886395/1404745170788028426/45435345.gif?ex=689d9fe3&is=689c4e63&hm=d978c434f41e8bc9514f60f5f02a9047a6961b728ada5a323767f8ebe4b02a2f&"
     )
-    await ctx.send(embed=embed, view=ShopView())
+    await interaction.response.send_message(embed=embed, view=ShopView())
 
 @bot.event
 async def on_ready():
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ 슬래시 명령어 동기화 완료: {len(synced)}개")
+    except Exception as e:
+        print(f"명령어 동기화 실패: {e}")
     print(f"✅ 로그인됨: {bot.user} (ID: {bot.user.id})")
 
 keep_alive()
