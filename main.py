@@ -17,8 +17,8 @@ TOKEN = os.getenv("BOT_TOKEN")
 CATEGORY_ID = 1398263224062836829
 TICKET_CATEGORY_NAME = "⠐ 💳 = 이용하기"
 LOG_CHANNEL_ID = 1398267597299912744
-ADMIN_ROLE_ID = 1398271188291289138
-OWNER_ROLE_ID = 1398268476933542018
+ADMIN_ROLE_ID = 1398271188291289138  # 실제 관리자 역할 ID로 변경
+OWNER_ROLE_ID = 1398268476933542018  # 실제 오너 역할 ID로 변경
 MAX_LOG_MESSAGES = 1000
 # ==============
 
@@ -35,7 +35,7 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(ShopView())
         self.add_view(CloseTicketView())
-        self.tree.add_command(shop_cmd)
+        self.tree.add_command(shop_cmd)  # 슬래시 명령어 등록
         print("Persistent views registered.")
 
 bot = MyBot()
@@ -194,7 +194,7 @@ class ShopSelect(Select):
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             await log_channel.send(embed=discord.Embed(
-                title="티켓 생성",
+                title="📥 티켓 생성",
                 description=f"채널: {ticket_channel.mention}\n생성자: {interaction.user.mention} ({interaction.user.id})\n항목: `{selected_item}`",
                 color=0x000000
             ))
@@ -204,14 +204,22 @@ class ShopView(View):
         super().__init__(timeout=None)
         self.add_item(ShopSelect())
 
+# ---- 티켓 명령어 ----
 @app_commands.command(name="티켓", description="티켓 임베드를 표시합니다. (관리자/오너 전용)")
 async def shop_cmd(interaction: discord.Interaction):
-    if not any(role.id in (ADMIN_ROLE_ID, OWNER_ROLE_ID) for role in interaction.user.roles):
-        await interaction.response.send_message("관리자 또는 오너만 사용할 수 있습니다", ephemeral=True)
+    if not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message("서버 안에서만 실행 가능합니다.", ephemeral=True)
+        return
+
+    # 소유자거나 관리자/오너 역할이 있으면 허용
+    if (
+        interaction.user.id != interaction.guild.owner_id and
+        not any(role.id in (ADMIN_ROLE_ID, OWNER_ROLE_ID) for role in interaction.user.roles)
+    ):
+        await interaction.response.send_message("관리자 또는 오너만 사용할 수 있습니다.", ephemeral=True)
         return
 
     embed = discord.Embed(
-        title="",
         description=(
             "# <a:emoji_10:1404769015439687701>주의사항<a:emoji_10:1404769015439687701>\n"
             "**• <#1398260667768635392> 필독 부탁드립니다<a:emoji_5:1404764522300047431>\n"
@@ -221,11 +229,10 @@ async def shop_cmd(interaction: discord.Interaction):
         ),
         color=0x000000
     )
-    embed.set_image(
-        url="https://cdn.discordapp.com/attachments/1398301252776886395/1404745170788028426/45435345.gif?ex=689d9fe3&is=689c4e63&hm=d978c434f41e8bc9514f60f5f02a9047a6961b728ada5a323767f8ebe4b02a2f&"
-    )
+    embed.set_image(url="https://cdn.discordapp.com/attachments/1398301252776886395/1404745170788028426/45435345.gif")
     await interaction.response.send_message(embed=embed, view=ShopView())
 
+# ---- 봇 실행 이벤트 ----
 @bot.event
 async def on_ready():
     try:
