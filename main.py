@@ -1,222 +1,381 @@
+# bot_vending_full.py
 import os
-import io
+import asyncio
+import aiosqlite
+import datetime as dt
+from typing import Optional, List
+
 import discord
-import pytz
-import traceback
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import View, Select, Button
-from flask import Flask
-import threading
 
-# ==== 설정 ====
-TOKEN = os.getenv("BOT_TOKEN")
-CATEGORY_ID = 1398263224062836829
-TICKET_CATEGORY_NAME = "이용하기"
-LOG_CHANNEL_ID = 1398267597299912744
-ADMIN_ROLE_ID = 1398271188291289138
-OWNER_ROLE_ID = 1398268476933542018
-MAX_LOG_MESSAGES = 1000
-# ==============
+# ============ 환경설정 ============
+TOKEN = os.getenv("BOT_TOKEN")  # 환경변수에 토큰 넣기
+GUILD_ID = int(os.getenv("GUILD_ID", "0"))      # 슬래시 동기화용(옵션)
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))  # 결제/구매 로그 채널
+ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID", "0"))    # 관리자 롤(없으면 모든 유저 제한)
+DB_PATH = os.getenv("DB_PATH", "vending.db")
 
-intents = discord.Intents.default()
-intents.messages = True
-intents.guilds = True
-intents.message_content = True
-intents.members = True
+INTENTS = discord.Intents.default()
+INTENTS.message_content = False
+INTENTS.members = True
+bot = commands.Bot(command_prefix="!", intents=INTENTS)
 
-class MyBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+# ============ DB ============
 
-    async def setup_hook(self):
-        self.add_view(ShopView())
-        self.add_view(CloseTicketView())
-        self.tree.add_command(shop_cmd)
-        self.tree.add_command(list_cmd)
+SCHEMA_SQL = """
+PRAGMA journal_mode=WAL;
 
-bot = MyBot()
-kst = pytz.timezone('Asia/Seoul')
+CREATE TABLE IF NOT EXISTS users (
+  user_id INTEGER PRIMARY KEY,
+  balance INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 
-# ---- Flask Keepalive ----
-app = Flask(__name__)
-@app.route('/')
-def home():
-    return "Bot is running!"
-def run_web():
-    port = int(os.getenv("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-def keep_alive():
-    threading.Thread(target=run_web, daemon=True).start()
+CREATE TABLE IF NOT EXISTS products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  price INTEGER NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
 
-# ---------- Helpers ----------
-async def save_channel_logs_and_send(channel: discord.TextChannel, log_channel: discord.TextChannel):
-    try:
-        msgs = []
-        async for m in channel.history(limit=MAX_LOG_MESSAGES, oldest_first=True):
-            timestamp = m.created_at.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S")
-            author = f"{m.author} ({m.author.id})"
-            content = m.content or ""
-            att_urls = " ".join(att.url for att in m.attachments) if m.attachments else ""
-            msgs.append(f"[{timestamp}] {author}: {content} {att_urls}")
-        txt = "\n".join(msgs) if msgs else "채팅 기록이 비어 있습니다."
-        bio = io.BytesIO(txt.encode("utf-8"))
-        bio.seek(0)
-        await log_channel.send(file=discord.File(fp=bio, filename=f"ticket-log-{channel.name}.txt"))
-    except Exception:
-        traceback.print_exc()
+-- 코드 재고 풀 (각 행이 1개의 판매코드)
+CREATE TABLE IF NOT EXISTS stock_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0,
+  used_by INTEGER,
+  used_at TEXT,
+  FOREIGN KEY(product_id) REFERENCES products(id)
+);
 
-def is_owner(interaction: discord.Interaction):
-    role = interaction.guild.get_role(OWNER_ROLE_ID)
-    return role and role in interaction.user.roles
+-- 충전핀
+CREATE TABLE IF NOT EXISTS topup_pins (
+  pin TEXT PRIMARY KEY,
+  amount INTEGER NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0,
+  used_by INTEGER,
+  used_at TEXT
+);
 
-# ---------- UI ----------
-class CloseTicketButton(Button):
-    def __init__(self):
-        super().__init__(label="티켓 닫기", style=discord.ButtonStyle.danger, custom_id="close_ticket_v2")
+-- 구매/충전/환불 등 원장
+CREATE TABLE IF NOT EXISTS ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  type TEXT NOT NULL, -- 'BUY','TOPUP','REFUND'
+  amount INTEGER NOT NULL,
+  meta TEXT,
+  created_at TEXT NOT NULL
+);
 
-    async def callback(self, interaction: discord.Interaction):
-        channel = interaction.channel
-        if not isinstance(channel, discord.TextChannel) or not channel.name.startswith("ticket-"):
-            await interaction.response.send_message("이 버튼은 티켓 채널에서만 사용 가능합니다.", ephemeral=True)
-            return
+-- 주문(구매 결과)
+CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  product_id INTEGER NOT NULL,
+  price INTEGER NOT NULL,
+  code_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(product_id) REFERENCES products(id),
+  FOREIGN KEY(code_id) REFERENCES stock_codes(id)
+);
+"""
 
-        await interaction.response.send_message("티켓을 닫는 중입니다...", ephemeral=True)
+async def db():
+    return await aiosqlite.connect(DB_PATH)
 
-        # 로그 채널로 기록 전송
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        if isinstance(log_channel, discord.TextChannel):
-            await save_channel_logs_and_send(channel, log_channel)
+async def db_init():
+    async with await db() as con:
+        await con.executescript(SCHEMA_SQL)
+        await con.commit()
 
-        # 채널 삭제
-        try:
-            await channel.delete(reason="티켓 닫기")
-        except discord.Forbidden:
-            await interaction.followup.send("권한이 부족하여 채널을 삭제하지 못했습니다. 봇 권한을 확인하세요.", ephemeral=True)
-        except Exception:
-            traceback.print_exc()
+async def get_or_create_user(uid: int):
+    async with await db() as con:
+        cur = await con.execute("SELECT user_id,balance FROM users WHERE user_id=?", (uid,))
+        row = await cur.fetchone()
+        if row:
+            return row[0], row[1]
+        now = dt.datetime.utcnow().isoformat()
+        await con.execute("INSERT INTO users(user_id,balance,created_at) VALUES(?,?,?)", (uid, 0, now))
+        await con.commit()
+        return uid, 0
 
-class CallOwnerButton(Button):
-    def __init__(self):
-        super().__init__(label="오너 호출", style=discord.ButtonStyle.secondary, custom_id="call_owner")
+async def user_balance(uid: int) -> int:
+    await get_or_create_user(uid)
+    async with await db() as con:
+        cur = await con.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+        (bal,) = await cur.fetchone()
+        return bal
 
-    async def callback(self, interaction: discord.Interaction):
-        owner_role = interaction.guild.get_role(OWNER_ROLE_ID)
-        if not owner_role:
-            await interaction.response.send_message("오너 역할을 찾을 수 없습니다.", ephemeral=True)
-            return
-        await interaction.channel.send(f"{owner_role.mention} 호출되었습니다!")
-        await interaction.response.send_message("오너를 호출했습니다.", ephemeral=True)
-
-class CloseTicketView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(CallOwnerButton())
-        self.add_item(CloseTicketButton())
-
-class ShopSelect(Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="구매하기", description="로블록스 아이템 또는 로벅스 구매")
-        ]
-        super().__init__(placeholder="원하는 항목을 선택하세요", options=options, custom_id="shop_select_v2")
-
-    async def callback(self, interaction: discord.Interaction):
-        # 유저가 참여 중인 열린 티켓 있는지 확인
-        existing = [
-            ch for ch in interaction.guild.text_channels
-            if ch.name.startswith("ticket-") and interaction.user in ch.members
-        ]
-        if existing:
-            await interaction.response.send_message(f"이미 열린 티켓이 있습니다: {existing[0].mention}", ephemeral=True)
-            return
-
-        guild = interaction.guild
-        category = guild.get_channel(CATEGORY_ID) or discord.utils.get(guild.categories, name=TICKET_CATEGORY_NAME)
-        if not category:
-            category = await guild.create_category(TICKET_CATEGORY_NAME)
-
-        # 유저 표시 이름(한글 가능)으로 채널명 생성
-        channel_name = f"ticket-{interaction.user.display_name}-구매하기"
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-        admin_role = guild.get_role(ADMIN_ROLE_ID)
-        if admin_role:
-            overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        owner_role = guild.get_role(OWNER_ROLE_ID)
-        if owner_role:
-            overwrites[owner_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-
-        ticket_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
-
-        guide_embed = discord.Embed(
-            description="구매 원하는 아이템을 미리 적어주세요.\n그래야 빠른 처리가 가능합니다.",
-            color=0x000000
+async def change_balance(uid: int, delta: int, typ: str, meta: str = ""):
+    async with await db() as con:
+        await con.execute("BEGIN IMMEDIATE")
+        # 보장: 행 잠금으로 경합 방지
+        cur = await con.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+        row = await cur.fetchone()
+        if not row:
+            now = dt.datetime.utcnow().isoformat()
+            await con.execute("INSERT INTO users(user_id,balance,created_at) VALUES(?,?,?)", (uid, 0, now))
+            bal = 0
+        else:
+            bal = row[0]
+        new_bal = bal + delta
+        if new_bal < 0:
+            await con.execute("ROLLBACK")
+            raise ValueError("INSUFFICIENT")
+        await con.execute("UPDATE users SET balance=? WHERE user_id=?", (new_bal, uid))
+        now = dt.datetime.utcnow().isoformat()
+        await con.execute(
+            "INSERT INTO ledger(user_id,type,amount,meta,created_at) VALUES(?,?,?,?,?)",
+            (uid, typ, delta, meta, now)
         )
-        await ticket_channel.send(embed=guide_embed, view=CloseTicketView())
+        await con.commit()
+        return new_bal
 
-        await interaction.response.send_message(f"티켓이 생성되었습니다: {ticket_channel.mention}", ephemeral=True)
+# ============ UI 컴포넌트 ============
 
-        # 선택창 초기화(컴포넌트 에러 방지)
-        try:
-            self.view.clear_items()
-            self.view.add_item(ShopSelect())
-            await interaction.message.edit(view=self.view)
-        except Exception:
-            # 원본 메시지를 편집할 권한/상황이 안 되면 무시
-            pass
-
-class ShopView(View):
+class VendingView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(ShopSelect())
+        super().__init__(timeout=120)
 
-# ---------- Commands ----------
-def owner_only():
+    @discord.ui.button(label="정보", emoji="ℹ️", style=discord.ButtonStyle.secondary, custom_id="info")
+    async def info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        bal = await user_balance(interaction.user.id)
+        await interaction.response.send_message(
+            f"**자판기 안내**\n- 현재 잔액: **{bal}원**\n- 💳 충전: 충전핀 입력으로 잔액이 올라갑니다.\n- 🛒 구매: 상품을 선택하면 재고 코드가 DM으로 지급됩니다.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="충전", emoji="💳", style=discord.ButtonStyle.primary, custom_id="topup")
+    async def topup(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = TopupModal()
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="구매", emoji="🛒", style=discord.ButtonStyle.success, custom_id="buy")
+    async def buy(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 상품 불러와서 드롭다운
+        async with await db() as con:
+            cur = await con.execute("SELECT id,name,price,(SELECT COUNT(1) FROM stock_codes s WHERE s.product_id=p.id AND s.used=0) AS left FROM products p WHERE enabled=1 ORDER BY id")
+            rows = await cur.fetchall()
+        if not rows:
+            return await interaction.response.send_message("판매 중인 상품이 없습니다.", ephemeral=True)
+        options = []
+        for pid, name, price, left in rows:
+            label = f"{name} - {price}원"
+            desc = f"남은수량 {left}개"
+            options.append(discord.SelectOption(label=label, description=desc, value=str(pid), emoji="🧾" if left>0 else "⛔"))
+        view = discord.ui.View(timeout=60)
+        select = ProductSelect(options)
+        view.add_item(select)
+        await interaction.response.send_message("구매할 상품을 선택하세요.", view=view, ephemeral=True)
+
+class ProductSelect(discord.ui.Select):
+    def __init__(self, options: List[discord.SelectOption]):
+        super().__init__(placeholder="상품 선택", min_values=1, max_values=1, options=options, custom_id="product_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        pid = int(self.values[0])
+        # 실제 구매 처리
+        try:
+            order_id, code_text, new_bal = await process_purchase(interaction.user.id, pid)
+        except ValueError as e:
+            msg = "알 수 없는 오류"
+            if str(e) == "NO_STOCK": msg = "해당 상품 재고가 없습니다."
+            if str(e) == "INSUFFICIENT": msg = "잔액이 부족합니다."
+            return await interaction.response.edit_message(content=msg, view=None)
+        # DM 발송
+        try:
+            await interaction.user.send(f"구매 완료! 주문번호 #{order_id}\n코드: `{code_text}`")
+        except:
+            pass
+        await interaction.response.edit_message(content=f"구매 완료! DM을 확인하세요. (잔액: {new_bal}원)", view=None)
+        await log_purchase(interaction.guild, interaction.user, order_id)
+
+async def process_purchase(uid: int, product_id: int):
+    # 트랜잭션: 재고 하나 픽, 잔액 차감, 주문 기록
+    async with await db() as con:
+        await con.execute("BEGIN IMMEDIATE")
+        # 상품/가격
+        cur = await con.execute("SELECT price FROM products WHERE id=? AND enabled=1", (product_id,))
+        row = await cur.fetchone()
+        if not row:
+            await con.execute("ROLLBACK")
+            raise ValueError("NO_STOCK")
+        price = row[0]
+        # 유저/잔액
+        cur = await con.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+        row = await cur.fetchone()
+        bal = row[0] if row else 0
+        if bal < price:
+            await con.execute("ROLLBACK")
+            raise ValueError("INSUFFICIENT")
+        # 재고 하나 집기
+        cur = await con.execute("SELECT id,code FROM stock_codes WHERE product_id=? AND used=0 LIMIT 1", (product_id,))
+        code_row = await cur.fetchone()
+        if not code_row:
+            await con.execute("ROLLBACK")
+            raise ValueError("NO_STOCK")
+        code_id, code_text = code_row
+        # 잔액 차감
+        new_bal = bal - price
+        if row is None:
+            now = dt.datetime.utcnow().isoformat()
+            await con.execute("INSERT INTO users(user_id,balance,created_at) VALUES(?,?,?)", (uid, new_bal, now))
+        else:
+            await con.execute("UPDATE users SET balance=? WHERE user_id=?", (new_bal, uid))
+        # 재고 사용 처리
+        now = dt.datetime.utcnow().isoformat()
+        await con.execute("UPDATE stock_codes SET used=1, used_by=?, used_at=? WHERE id=?", (uid, now, code_id))
+        # 주문/원장
+        await con.execute("INSERT INTO orders(user_id,product_id,price,code_id,created_at) VALUES(?,?,?,?,?)",
+                          (uid, product_id, price, code_id, now))
+        order_id = (await con.execute("SELECT last_insert_rowid()")).fetchone()
+        order_id = (await order_id).__anext__()  # trick to get single value in aiosqlite
+        await con.execute("INSERT INTO ledger(user_id,type,amount,meta,created_at) VALUES(?,?,?,?,?)",
+                          (uid, "BUY", -price, f"product_id={product_id},code_id={code_id}", now))
+        await con.commit()
+    return order_id[0], code_text, new_bal
+
+async def log_purchase(guild: Optional[discord.Guild], user: discord.User, order_id: int):
+    if not guild or not LOG_CHANNEL_ID:
+        return
+    ch = guild.get_channel(LOG_CHANNEL_ID)
+    if ch:
+        await ch.send(f"🧾 **구매 로그** | 주문 #{order_id} | {user.mention}")
+
+# ============ 모달: 충전 ============
+
+class TopupModal(discord.ui.Modal, title="충전핀 입력"):
+    pin = discord.ui.TextInput(label="충전핀", placeholder="예) ABCD-1234-XY", required=True, min_length=4, max_length=64)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            amount, new_bal = await redeem_pin(interaction.user.id, str(self.pin))
+        except ValueError as e:
+            msg = "유효하지 않은 핀입니다."
+            if str(e) == "PIN_USED": msg = "이미 사용된 핀입니다."
+            return await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.response.send_message(f"충전 완료! +{amount}원 (잔액: {new_bal}원)", ephemeral=True)
+        # 로그
+        if LOG_CHANNEL_ID and interaction.guild:
+            ch = interaction.guild.get_channel(LOG_CHANNEL_ID)
+            if ch: await ch.send(f"💳 **충전 로그** | {interaction.user.mention} +{amount}원")
+
+async def redeem_pin(uid: int, pin: str):
+    async with await db() as con:
+        await con.execute("BEGIN IMMEDIATE")
+        cur = await con.execute("SELECT amount,used FROM topup_pins WHERE pin=?", (pin,))
+        row = await cur.fetchone()
+        if not row:
+            await con.execute("ROLLBACK"); raise ValueError("PIN_INVALID")
+        amount, used = row
+        if used: 
+            await con.execute("ROLLBACK"); raise ValueError("PIN_USED")
+        # 잔액 증가
+        cur = await con.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+        r = await cur.fetchone()
+        bal = r[0] if r else 0
+        new_bal = bal + amount
+        now = dt.datetime.utcnow().isoformat()
+        if r is None:
+            await con.execute("INSERT INTO users(user_id,balance,created_at) VALUES(?,?,?)", (uid, new_bal, now))
+        else:
+            await con.execute("UPDATE users SET balance=? WHERE user_id=?", (new_bal, uid))
+        await con.execute("UPDATE topup_pins SET used=1, used_by=?, used_at=? WHERE pin=?", (uid, now, pin))
+        await con.execute("INSERT INTO ledger(user_id,type,amount,meta,created_at) VALUES(?,?,?,?,?)",
+                          (uid, "TOPUP", amount, f"pin={pin}", now))
+        await con.commit()
+    return amount, new_bal
+
+# ============ 슬래시 커맨드 ============
+
+@app_commands.guilds(discord.Object(id=GUILD_ID)) if GUILD_ID else (lambda x: x)
+@bot.tree.command(name="자판기", description="버튼 메뉴를 엽니다.")
+async def vending_cmd(interaction: discord.Interaction):
+    view = VendingView()
+    await interaction.response.send_message("원하는 메뉴를 선택하세요.", view=view, ephemeral=True)
+
+# --- 유틸/조회
+@app_commands.guilds(discord.Object(id=GUILD_ID)) if GUILD_ID else (lambda x: x)
+@bot.tree.command(name="잔액", description="내 잔액을 확인합니다.")
+async def balance_cmd(interaction: discord.Interaction):
+    bal = await user_balance(interaction.user.id)
+    await interaction.response.send_message(f"현재 잔액: **{bal}원**", ephemeral=True)
+
+# ============ 관리자 전용 ============
+
+def admin_only():
     async def predicate(interaction: discord.Interaction):
-        role = interaction.guild.get_role(OWNER_ROLE_ID)
-        if role and role in interaction.user.roles:
-            return True
-        await interaction.response.send_message("이 명령어는 서버 오너만 사용할 수 있습니다.", ephemeral=True)
-        return False
+        if ADMIN_ROLE_ID == 0:
+            return interaction.user.guild_permissions.administrator
+        role_ok = any(r.id == ADMIN_ROLE_ID for r in getattr(interaction.user, "roles", []))
+        return role_ok
     return app_commands.check(predicate)
 
-@app_commands.command(name="티켓")
-@owner_only()
-async def shop_cmd(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="티켓 안내",
-        description=(
-            "**• <#1398260667768635392> 필독 부탁드립니다\n"
-            "• <#1398261912852103208> 재고 확인하고 티켓 열기\n"
-            "• 장난문의는 제재 당할 수도 있습니다\n"
-            "• 티켓 열고 잠수 탈 시 하루 탐아 당할 수 있습니다**"
-        ),
-        color=0x000000
-    )
-    await interaction.response.send_message(embed=embed, view=ShopView())
+@app_commands.guilds(discord.Object(id=GUILD_ID)) if GUILD_ID else (lambda x: x)
+@bot.tree.command(name="관리_상품추가", description="상품을 추가합니다.")
+@admin_only()
+@app_commands.describe(name="상품명", price="가격(정수)")
+async def add_product_cmd(interaction: discord.Interaction, name: str, price: int):
+    async with await db() as con:
+        try:
+            await con.execute("INSERT INTO products(name,price,created_at) VALUES(?,?,?)",
+                              (name, price, dt.datetime.utcnow().isoformat()))
+            await con.commit()
+        except aiosqlite.IntegrityError:
+            return await interaction.response.send_message("이미 존재하는 상품명입니다.", ephemeral=True)
+    await interaction.response.send_message(f"상품 등록: {name} ({price}원)", ephemeral=True)
 
-@app_commands.command(name="티켓목록")
-@owner_only()
-async def list_cmd(interaction: discord.Interaction):
-    tickets = [
-        ch.mention for ch in interaction.guild.text_channels
-        if interaction.user in ch.members and ch.name.startswith("ticket-")
-    ]
-    if not tickets:
-        await interaction.response.send_message("현재 참여 중인 티켓이 없습니다.", ephemeral=True)
-    else:
-        await interaction.response.send_message("\n".join(tickets), ephemeral=True)
+@app_commands.guilds(discord.Object(id=GUILD_ID)) if GUILD_ID else (lambda x: x)
+@bot.tree.command(name="관리_재고등록", description="재고 코드를 줄바꿈으로 여러 개 등록")
+@admin_only()
+async def add_stock_cmd(interaction: discord.Interaction, product_id: int, codes: str):
+    rows = [c.strip() for c in codes.splitlines() if c.strip()]
+    async with await db() as con:
+        for c in rows:
+            await con.execute("INSERT INTO stock_codes(product_id,code) VALUES(?,?)", (product_id, c))
+        await con.commit()
+    await interaction.response.send_message(f"재고 {len(rows)}개 등록됨 (상품ID {product_id})", ephemeral=True)
 
-# ---------- Ready ----------
+@app_commands.guilds(discord.Object(id=GUILD_ID)) if GUILD_ID else (lambda x: x)
+@bot.tree.command(name="관리_핀생성", description="충전핀을 생성합니다.")
+@admin_only()
+async def create_pin_cmd(interaction: discord.Interaction, pin: str, amount: int):
+    async with await db() as con:
+        try:
+            await con.execute("INSERT INTO topup_pins(pin,amount) VALUES(?,?)", (pin, amount))
+            await con.commit()
+        except aiosqlite.IntegrityError:
+            return await interaction.response.send_message("이미 존재하는 핀입니다.", ephemeral=True)
+    await interaction.response.send_message(f"핀 생성: {pin} (+{amount})", ephemeral=True)
+
+@app_commands.guilds(discord.Object(id=GUILD_ID)) if GUILD_ID else (lambda x: x)
+@bot.tree.command(name="관리_강제충전", description="특정 유저 잔액 변경(+/-)")
+@admin_only()
+async def admin_credit_cmd(interaction: discord.Interaction, user: discord.Member, delta: int):
+    try:
+        new_bal = await change_balance(user.id, delta, "ADMIN", f"by={interaction.user.id}")
+    except ValueError:
+        return await interaction.response.send_message("잔액 부족/오류", ephemeral=True)
+    await interaction.response.send_message(f"{user.display_name} 잔액 변경: {delta} → 현재 {new_bal}", ephemeral=True)
+
+# ============ 라이프사이클 ============
+
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
-    print(f"로그인됨: {bot.user}")
+    await db_init()
+    try:
+        if GUILD_ID:
+            await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+        else:
+            await bot.tree.sync()
+    except Exception as e:
+        print("Sync error:", e)
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
-keep_alive()
-bot.run(TOKEN)
+if __name__ == "__main__":
+    if not TOKEN:
+        raise SystemExit("BOT_TOKEN 환경변수를 설정하세요.")
+    bot.run(TOKEN)
